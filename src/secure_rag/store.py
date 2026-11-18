@@ -228,6 +228,13 @@ class KnowledgeStore:
 
     # ---- output-check support ---------------------------------------------
 
+    def can_read_doc(self, user: User, doc_id: str) -> bool:
+        """True if the user may read this document now: indexed tags and current row, as in search."""
+        stamped = self._stamped.get(doc_id)
+        if stamped is None:
+            return False
+        return _readable(user, stamped, current_access({doc_id: stamped}).get(doc_id))
+
     def hidden_canaries(self, user: User) -> list[str]:
         """Canary strings of documents the user may NOT read right now."""
         access_now = current_access({doc.doc_id: doc.access for doc in self._documents if doc.canary})

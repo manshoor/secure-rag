@@ -73,7 +73,7 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 216 offline tests, about two seconds; 15 Postgres/Qdrant tests skip
+uv run pytest -q                 # 223 offline tests, about two seconds; 15 Postgres/Qdrant tests skip
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
 uv run rag ask --user sara "How many leave days can I carry over?"

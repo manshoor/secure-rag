@@ -2411,6 +2411,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "defusedxml" },
     { name = "fastapi" },
     { name = "langfuse" },
     { name = "langgraph" },
@@ -2444,6 +2445,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic" },
+    { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "docling", marker = "extra == 'docling'", specifier = ">=2.140" },
     { name = "fastapi", specifier = ">=0.163.2" },
     { name = "langfuse", specifier = ">=5.2.0" },

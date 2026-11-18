@@ -229,3 +229,49 @@ def test_same_person_cannot_approve_both_gates():
     both = User("pat", "Pat", frozenset({"alpha-construction"}), frozenset({"procurement", "finance"}))
     state = {"requester": "sara", "company": "alpha-construction", "approvals": {"procurement": "pat"}}
     assert _gate_problem(state, both, frozenset({"finance"})) == "one person cannot approve both gates"
+
+
+def test_policy_text_is_not_served_after_access_is_removed(system, monkeypatch):
+    """The policy cache is keyed on the viewer's current roles, not only their id."""
+    from dataclasses import replace
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from secure_rag.agent import Decision
+    from secure_rag.identity import get_user
+    from secure_rag.intake import OfflineIntake
+    from secure_rag.workflow import WorkflowRunner
+
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    wf = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
+    run = wf.start_request(get_user("sara"), "18 site engineers join on 15 Jan. Order laptops and safety kits.")
+    wf.decide(run.run_id, get_user("omar"), Decision.APPROVE)
+    omar = get_user("omar")
+    assert wf.view(run.run_id, omar).policy["visible"] is True
+
+    # Omar decided a gate, so he may still view the run, but no longer read the policy.
+    demoted = replace(omar, roles=frozenset({"employee"}))
+    assert wf.view(run.run_id, demoted).policy["visible"] is False
+
+
+def test_policy_text_is_not_served_after_the_document_is_narrowed(system, monkeypatch):
+    """A document row narrowed by an admin applies to cached policy text at once."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from secure_rag import store
+    from secure_rag.agent import Decision
+    from secure_rag.identity import DocAccess, get_user
+    from secure_rag.intake import OfflineIntake
+    from secure_rag.workflow import WorkflowRunner
+
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    wf = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
+    run = wf.start_request(get_user("sara"), "18 site engineers join on 15 Jan. Order laptops and safety kits.")
+    omar = get_user("omar")
+    wf.decide(run.run_id, omar, Decision.APPROVE)
+    assert wf.view(run.run_id, omar).policy["visible"] is True
+
+    # The admin removes procurement from the policy document's current row.
+    narrowed = DocAccess("alpha-construction", frozenset({"finance", "executive"}))
+    monkeypatch.setattr(store, "current_access", lambda stamped: {doc_id: narrowed for doc_id in stamped})
+    assert wf.view(run.run_id, omar).policy == {"visible": False}

@@ -17,7 +17,9 @@ RAG_ALLOW_CLOUD_PARSE=yes is set for that run.
 
 import csv
 import os
+import copy
 import re
+import zipfile
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
@@ -30,6 +32,12 @@ _MAX_DESCRIPTION = 500
 _MAX_LINES = 5000
 _MAX_ROWS = 20000  # rows read from a file before giving up on the rest
 _MAX_COLUMNS = 40
+# An .xlsx is a zip: a small upload can expand to gigabytes. Checked before openpyxl reads it.
+_MAX_UNZIPPED_BYTES = 20_000_000
+_MAX_WHOLE_PART_BYTES = 2_000_000  # parts openpyxl parses as one XML tree (all but sheets and shared strings)
+_STREAMED_PARTS = re.compile(r"xl/worksheets/[^/]+\.xml|xl/sharedStrings\.xml")
+_UNZIP_CHUNK = 65536
+_NO_SIZE_LIMIT = 2**62  # zipfile stops at the real end of the data; our counter enforces the limit
 _MAX_QUANTITY = Decimal("1000000000")
 # Plain quantities only: 1200, 1,200, 1,200.50, 18.5. Anything else ("1.200,50", "120 m2", "TBC") is unreadable.
 _QUANTITY_RE = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?|\d+(\.\d+)?")
@@ -125,6 +133,7 @@ def _tabular_rows(path: Path) -> list[list[str]]:
 
     from openpyxl import load_workbook
 
+    _check_unzipped_size(path)
     book = load_workbook(path, read_only=True, data_only=True)
     rows: list[list[str]] = []
     for sheet in book.worksheets:
@@ -136,7 +145,41 @@ def _tabular_rows(path: Path) -> list[list[str]]:
     return rows
 
 
+def _check_unzipped_size(path: Path) -> None:
+    """Refuse a workbook whose contents unzip past the limits.
+
+    The sizes a zip declares can lie, and zipfile inflates a whole entry before
+    trimming it to the declared size. So each entry is streamed in small chunks
+    and its real size counted; memory stays at one chunk.
+    """
+    total = 0
+    with zipfile.ZipFile(path) as archive:
+        for entry in archive.infolist():
+            limit = _MAX_UNZIPPED_BYTES if _STREAMED_PARTS.fullmatch(entry.filename) else _MAX_WHOLE_PART_BYTES
+            size = _streamed_size(archive, entry, min(limit, _MAX_UNZIPPED_BYTES - total))
+            if size != entry.file_size:
+                raise BoqParseError("the workbook is damaged: a part does not match its declared size")
+            total += size
+
+
+def _streamed_size(archive: zipfile.ZipFile, entry: zipfile.ZipInfo, limit: int) -> int:
+    """Real unzipped size of one entry, stopping as soon as it passes `limit`."""
+    # Lift the declared size so zipfile reads to the true end of the data, not the claim.
+    unbounded = copy.copy(entry)
+    unbounded.file_size = _NO_SIZE_LIMIT
+    size = 0
+    with archive.open(unbounded) as stream:
+        while chunk := stream.read(_UNZIP_CHUNK):
+            size += len(chunk)
+            if size > limit:
+                raise BoqParseError(f"the workbook is too large when unzipped (limits: {_MAX_UNZIPPED_BYTES // 1_000_000} MB in all, "
+                                    f"{_MAX_WHOLE_PART_BYTES // 1_000_000} MB for parts other than sheets)")
+    return size
+
+
 def _docling_rows(path: Path) -> list[list[str]]:
+    if path.suffix.lower() == ".xlsx":
+        _check_unzipped_size(path)
     try:
         from docling.document_converter import DocumentConverter
     except ImportError as error:

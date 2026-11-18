@@ -119,3 +119,80 @@ def test_boq_check_reports_counts_and_accuracy():
     assert report["matched"] == 18 and report["unmatched"] == 0
     assert report["accuracy"] == {"labelled": 18, "found": 1.0, "description": 1.0, "unit": 1.0, "quantity": 1.0, "section": 1.0}
     assert "description" not in str({k: v for k, v in report.items() if k != "accuracy"})
+
+
+def test_excel_that_unzips_too_large_is_refused(tmp_path):
+    """A small .xlsx that expands to 30 MB is stopped before openpyxl reads it."""
+    import zipfile
+
+    bomb = tmp_path / "bomb.xlsx"
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("xl/sharedStrings.xml", b"0" * 30_000_000)
+    assert bomb.stat().st_size < 1_000_000
+    with pytest.raises(BoqParseError, match="too large"):
+        parse_boq(bomb, ParserKind.TABULAR)
+
+
+def test_excel_xml_parsing_is_hardened():
+    """openpyxl uses defusedxml when it is installed, which blocks entity expansion."""
+    from openpyxl.xml import DEFUSEDXML
+
+    assert DEFUSEDXML
+
+
+def _lying_workbook(path, real_bytes: int, declared: int) -> None:
+    """A zip whose central directory claims a small size for a large entry."""
+    import io
+    import struct
+    import zipfile
+    import zlib
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"\0" * real_bytes)
+    raw = bytearray(buffer.getvalue())
+    crc = zlib.crc32(b"\0" * declared)
+    struct.pack_into("<L", raw, 14, crc)
+    struct.pack_into("<L", raw, 22, declared)
+    central = raw.rfind(b"PK\x01\x02")
+    struct.pack_into("<L", raw, central + 16, crc)
+    struct.pack_into("<L", raw, central + 24, declared)
+    path.write_bytes(raw)
+
+
+def test_excel_that_lies_about_its_size_is_refused_without_inflating_it(tmp_path):
+    """Declares 100 bytes, holds 300 MB: the real size is counted while streaming."""
+    import tracemalloc
+
+    bomb = tmp_path / "lying.xlsx"
+    _lying_workbook(bomb, 300_000_000, 100)
+    tracemalloc.start()
+    with pytest.raises(BoqParseError):
+        parse_boq(bomb, ParserKind.TABULAR)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 50_000_000
+
+
+def test_excel_part_read_whole_is_capped_below_the_total(tmp_path):
+    """openpyxl parses some parts as one XML tree: those get a smaller cap than sheets."""
+    import zipfile
+
+    big = tmp_path / "big_part.xlsx"
+    with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<a/>" * 1_000_000)
+    with pytest.raises(BoqParseError, match="too large"):
+        parse_boq(big, ParserKind.TABULAR)
+
+
+def test_docling_backend_checks_excel_size_first(tmp_path, monkeypatch):
+    import zipfile
+
+    from secure_rag import boq_parser
+
+    bomb = tmp_path / "bomb.xlsx"
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("xl/sharedStrings.xml", b"0" * 30_000_000)
+    monkeypatch.setitem(sys.modules, "docling", None)  # the size check must come before any import
+    with pytest.raises(BoqParseError, match="too large"):
+        boq_parser._docling_rows(bomb)

@@ -187,8 +187,9 @@ class WorkflowRunner:
         self._run_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
         self._locks_guard = threading.Lock()
 
-        # Policy citations per (run, viewer): a view must not call the model every time.
-        self._policy_cache: dict[tuple[str, str], dict] = {}
+        # Policy citations per run and viewer access: a view must not call the model every time,
+        # and a changed role or company must not be served text retrieved under the old one.
+        self._policy_cache: dict[tuple, dict] = {}
 
     # ---- public API --------------------------------------------------------
 
@@ -600,7 +601,7 @@ class WorkflowRunner:
         question = values.get("policy_question")
         if not question:
             return {}
-        key = (run_id, viewer.user_id)
+        key = (run_id, viewer.user_id, tuple(sorted(viewer.roles)), tuple(sorted(viewer.companies)))
         if key not in self._policy_cache:
             answer = ask(self._store, self._composer, viewer, question)
             cited = [c for c in answer.citations if c.doc_id == _POLICY_DOC]
@@ -614,7 +615,12 @@ class WorkflowRunner:
                     "section": cited[0].section,
                     "text": answer.text,
                 }
-        return self._policy_cache[key]
+
+        # Cached text is served only while the policy document is still readable now.
+        cached = self._policy_cache[key]
+        if cached["visible"] and not self._store.can_read_doc(viewer, cached["doc_id"]):
+            return {"visible": False}
+        return cached
 
     def _lock_for(self, run_id: str) -> threading.Lock:
         with self._locks_guard:
