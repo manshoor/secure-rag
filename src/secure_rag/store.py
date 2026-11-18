@@ -33,7 +33,15 @@ from qdrant_client.models import (
 from . import config
 from .config import MIN_TERM_OVERLAP, RRF_K, SEARCH_CANDIDATES
 from .embed import Embedder, tokens
-from .identity import DocAccess, User, allowed_companies, can_read, current_access
+from .identity import (
+    DocAccess,
+    User,
+    allowed_companies,
+    can_read,
+    companies_named,
+    current_access,
+    without_company_names,
+)
 from .ingest import Chunk, Document
 
 _COLLECTION_PREFIX = "chunks_"
@@ -126,7 +134,14 @@ class KnowledgeStore:
     # ---- search -----------------------------------------------------------
 
     def search(self, user: User, query: str, limit: int) -> list[Hit]:
-        """Return up to limit relevant chunks the user may read, best first."""
+        """Return up to limit relevant chunks the user may read, best first.
+
+        A question that names companies is about those companies: other
+        companies' chunks are dropped, group-wide ones stay. Naming only a
+        company the user cannot read leaves group-wide chunks only.
+        """
+        named = companies_named(query)
+        query = without_company_names(query)  # the name scopes the search; it is not a topic
         vector_ranked = self._vector_search(user, query)
         keyword_ranked = self._keyword_search(user, query)
         query_terms = set(tokens(query))
@@ -151,6 +166,10 @@ class KnowledgeStore:
 
             # Defence in depth: re-check access even though both retrievers filtered.
             if not _readable(user, chunk.access, access_now.get(chunk.doc_id)):
+                continue
+
+            # Scope: the right rule of the wrong company is a wrong answer.
+            if named and chunk.access.company not in named | {config.GROUP_COMPANY}:
                 continue
 
             # Relevance floor: drop weak matches so off-topic questions get a refusal.

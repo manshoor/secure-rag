@@ -1,0 +1,197 @@
+{
+  "_note": "Invented stand-in for an HR system API. All people are fictional.",
+  "hires": [
+    {
+      "id": "HR-1041",
+      "name": "Yousef Haddad",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2026-12-01",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1042",
+      "name": "Maryam Saleh",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2026-12-01",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1043",
+      "name": "Tariq Nasser",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2026-12-01",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1044",
+      "name": "Rami Aziz",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2026-12-01",
+      "status": "withdrawn"
+    },
+    {
+      "id": "HR-1050",
+      "name": "Dana Khoury",
+      "role": "quantity surveyor",
+      "company": "alpha-construction",
+      "start_date": "2026-12-01",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1101",
+      "name": "Adel (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1102",
+      "name": "Basma (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1103",
+      "name": "Chadi (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1104",
+      "name": "Dalia (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1105",
+      "name": "Emad (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1106",
+      "name": "Farah (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1107",
+      "name": "Ghassan (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1108",
+      "name": "Hiba (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1109",
+      "name": "Imad (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1110",
+      "name": "Jana (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1111",
+      "name": "Karim (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1112",
+      "name": "Layla (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1113",
+      "name": "Majed (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1114",
+      "name": "Nadia (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1115",
+      "name": "Osama (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1116",
+      "name": "Rana (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1117",
+      "name": "Samir (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-1118",
+      "name": "Tala (invented)",
+      "role": "site engineer",
+      "company": "alpha-construction",
+      "start_date": "2027-01-15",
+      "status": "confirmed"
+    },
+    {
+      "id": "HR-B101",
+      "name": "Hassan Rafi",
+      "role": "site engineer",
+      "company": "beta-properties",
+      "start_date": "2026-12-01",
+      "status": "confirmed"
+    }
+  ]
+}

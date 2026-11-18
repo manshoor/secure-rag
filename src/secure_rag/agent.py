@@ -33,10 +33,9 @@ from . import audit, config, db, tracing
 from .answer import Composer, ask
 from .identity import User, get_user
 from .llm import ClaudeClient
+from .policy import EXECUTIVE_APPROVAL_AED
 from .store import KnowledgeStore
 
-# Mirrors the procurement policy: above this, an executive must approve.
-EXECUTIVE_APPROVAL_AED = 100_000
 _CHECKPOINT_FILE = "checkpoints.sqlite"
 _OUTBOX_FILE = "outbox.jsonl"
 _TRACE_TAG = "agent"

@@ -39,3 +39,16 @@ def build_system(
     if (llm or llm_kind()) is LlmKind.CLAUDE:
         return System(report, store, ClaudeComposer(), ClaudePlanner())
     return System(report, store, ExtractiveComposer(), KeywordPlanner())
+
+
+def build_workflows(system: System, checkpointer=None):
+    """Workflow runner for this system: offline intake and notes, or Claude when RAG_LLM=claude."""
+    from .boq import ClaudeCanonicalizer
+    from .intake import ClaudeIntake, ClaudeSummarizer, OfflineIntake, TemplateSummarizer
+    from .workflow import WorkflowRunner
+
+    if isinstance(system.planner, ClaudePlanner):
+        return WorkflowRunner(
+            system.store, system.composer, ClaudeIntake(), checkpointer, ClaudeSummarizer(), canonicalizer=ClaudeCanonicalizer()
+        )
+    return WorkflowRunner(system.store, system.composer, OfflineIntake(), checkpointer, TemplateSummarizer())

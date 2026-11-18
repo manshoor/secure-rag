@@ -1,6 +1,7 @@
 """Settings and named constants shared by every module."""
 
 import os
+from datetime import date
 from enum import Enum
 from pathlib import Path
 
@@ -10,6 +11,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = Path(os.environ.get("RAG_DOCS_DIR", PROJECT_ROOT / "data" / "docs"))
 DATA_DIR = Path(os.environ.get("RAG_DATA_DIR", PROJECT_ROOT / "data" / "runtime"))
 GOLDEN_FILE = PROJECT_ROOT / "data" / "golden.json"
+
+# Stand-ins for the HR system, vendor catalogue and budgets (read via systems.py).
+SYSTEMS_DIR = PROJECT_ROOT / "data" / "systems"
+# Real files for local testing only; never committed, sent out or quoted.
+PRIVATE_DIR = PROJECT_ROOT / "data" / "private"
+SAMPLES_DIR = PROJECT_ROOT / "data" / "samples"
+
+
+def systems_dir() -> Path:
+    """Folder with the system stand-in files; RAG_SYSTEMS_DIR overrides (tests)."""
+    return Path(os.environ.get("RAG_SYSTEMS_DIR", SYSTEMS_DIR))
+
+
+def today() -> date:
+    """Today's date; RAG_TODAY (YYYY-MM-DD) fixes it for tests and rehearsals."""
+    fixed = os.environ.get("RAG_TODAY", "")
+    return date.fromisoformat(fixed) if fixed else date.today()
 
 # Chunking: split on headings first, then cap long sections by words.
 CHUNK_MAX_WORDS = 120

@@ -7,6 +7,7 @@ after fusion, so a bug in one layer cannot leak a document):
                        and  doc.roles  intersects  user.roles
 """
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -39,6 +40,7 @@ _USERS = {
     "omar": User("omar", "Omar (Procurement, Alpha)", frozenset({"alpha-construction"}), frozenset({"employee", "procurement"})),
     "lina": User("lina", "Lina (Finance, Beta)", frozenset({"beta-properties"}), frozenset({"employee", "finance"})),
     "faisal": User("faisal", "Faisal (Finance, Alpha)", frozenset({"alpha-construction"}), frozenset({"employee", "finance"})),
+    "khalid": User("khalid", "Khalid (Site engineer, Alpha)", frozenset({"alpha-construction"}), frozenset({"employee", "site_engineer"})),
     "noura": User("noura", "Noura (Executive, Group)", frozenset({"alpha-construction", "beta-properties"}), frozenset({"employee", "executive"})),
 }
 
@@ -69,6 +71,42 @@ def _user_from_row(row: db.UserRow) -> User:
 def allowed_companies(user: User) -> list[str]:
     """Companies whose documents the user may see, including group-wide ones."""
     return sorted(user.companies | {GROUP_COMPANY})
+
+
+# Company names as people write them: (full name, short name); the full name is
+# the label. A stand-in for the directory; production reads them from the HR system.
+_COMPANY_NAMES = {
+    "alpha-construction": ("Alpha Construction", "Alpha"),
+    "beta-properties": ("Beta Properties", "Beta"),
+}
+_GROUP_LABEL = "All group companies"
+
+# Full names match in any letter case. Short names are ordinary words too
+# ("a beta purchase", "alpha-numeric"), so they match only capitalised and not
+# before a hyphen.
+_COMPANY_RE = {
+    company: re.compile(rf"(?i:\b{re.escape(full)}\b)|\b{re.escape(short)}\b(?!-)")
+    for company, (full, short) in _COMPANY_NAMES.items()
+}
+
+
+def companies_named(text: str) -> set[str]:
+    """Company ids a text mentions by name: 'at Alpha Construction' -> {'alpha-construction'}."""
+    return {company for company, pattern in _COMPANY_RE.items() if pattern.search(text)}
+
+
+def without_company_names(text: str) -> str:
+    """The text with company names removed, so a name scopes a search but does not score it."""
+    for pattern in _COMPANY_RE.values():
+        text = pattern.sub(" ", text)
+    return text
+
+
+def company_label(company: str) -> str:
+    """How a company is shown to people and to the model."""
+    if company == GROUP_COMPANY:
+        return _GROUP_LABEL
+    return _COMPANY_NAMES.get(company, (company,))[0]
 
 
 def can_read(user: User, access: DocAccess) -> bool:

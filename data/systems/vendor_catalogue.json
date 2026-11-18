@@ -1,0 +1,131 @@
+{
+  "_note": "Invented stand-in for the approved-vendor catalogue (ERP). Only approved vendors appear. Prices in AED, excluding VAT.",
+  "items": [
+    {
+      "code": "IT-LAPTOP-14",
+      "description": "Laptop 14 inch, 16 GB RAM, 512 GB SSD",
+      "unit": "nos",
+      "vendor": "Desert Tech Supplies LLC",
+      "unit_price_aed": "5200.00"
+    },
+    {
+      "code": "PPE-KIT-STD",
+      "description": "Site safety kit: helmet, boots, vest, gloves, glasses",
+      "unit": "nos",
+      "vendor": "Falcon Safety Trading LLC",
+      "unit_price_aed": "850.00"
+    },
+    {
+      "code": "IT-PHONE-STD",
+      "description": "Mobile phone, standard",
+      "unit": "nos",
+      "vendor": "Desert Tech Supplies LLC",
+      "unit_price_aed": "1450.00"
+    },
+    {
+      "code": "BLK-200-HOL",
+      "description": "Hollow concrete block wall 200mm thick",
+      "unit": "m2",
+      "vendor": "Gulf Blocks Factory LLC",
+      "unit_price_aed": "68.00"
+    },
+    {
+      "code": "BLK-150-HOL",
+      "description": "Hollow concrete block wall 150mm thick",
+      "unit": "m2",
+      "vendor": "Gulf Blocks Factory LLC",
+      "unit_price_aed": "58.00"
+    },
+    {
+      "code": "BLK-100-SOL",
+      "description": "Solid concrete block wall 100mm thick",
+      "unit": "m2",
+      "vendor": "Gulf Blocks Factory LLC",
+      "unit_price_aed": "52.00"
+    },
+    {
+      "code": "PLS-INT-15",
+      "description": "Internal cement plaster 15mm thick",
+      "unit": "m2",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "32.00"
+    },
+    {
+      "code": "PLS-EXT-20",
+      "description": "External cement plaster 20mm thick",
+      "unit": "m2",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "41.00"
+    },
+    {
+      "code": "PNT-EMU-2C",
+      "description": "Emulsion paint internal walls two coats",
+      "unit": "m2",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "18.50"
+    },
+    {
+      "code": "RBR-T12",
+      "description": "High yield steel rebar T12",
+      "unit": "kg",
+      "vendor": "Falcon Steel Fabrication LLC",
+      "unit_price_aed": "3.10"
+    },
+    {
+      "code": "CON-C30",
+      "description": "Ready mix concrete grade C30",
+      "unit": "m3",
+      "vendor": "Gulf Readymix Concrete LLC",
+      "unit_price_aed": "290.00"
+    },
+    {
+      "code": "LNT-PC",
+      "description": "Precast concrete lintel over openings",
+      "unit": "lm",
+      "vendor": "Gulf Blocks Factory LLC",
+      "unit_price_aed": "75.00"
+    },
+    {
+      "code": "DPC-MEM",
+      "description": "Damp proof course membrane under blockwork",
+      "unit": "lm",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "9.50"
+    },
+    {
+      "code": "MSH-EXP",
+      "description": "Expanded metal mesh at block and column joints",
+      "unit": "lm",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "6.00"
+    },
+    {
+      "code": "SCF-ACC",
+      "description": "Scaffolding access for blockwork",
+      "unit": "m2",
+      "vendor": "Falcon Scaffolding Services LLC",
+      "unit_price_aed": "12.00"
+    },
+    {
+      "code": "WTR-PRF",
+      "description": "Bitumen waterproofing membrane",
+      "unit": "m2",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "38.00"
+    },
+    {
+      "code": "TIE-WAL",
+      "description": "Stainless steel wall ties",
+      "unit": "nos",
+      "vendor": "Falcon Steel Fabrication LLC",
+      "unit_price_aed": "1.80"
+    },
+    {
+      "code": "GRT-NS",
+      "description": "Non shrink cementitious grout",
+      "unit": "kg",
+      "vendor": "Al Noor Building Materials LLC",
+      "unit_price_aed": "4.20"
+    }
+  ]
+}

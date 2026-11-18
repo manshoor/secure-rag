@@ -11,12 +11,15 @@
 """
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 from . import db, tracing
 from .agent import AgentRunner, Decision, Outcome, Status
 from .answer import ask
-from .app import build_system
+from .app import build_system, build_workflows
+from .boq_parser import BoqParseError, ParserKind, parser_kind
 from .config import DOCS_DIR, GOLDEN_FILE
 from .evaluate import format_report, run_eval, save_run
 from .identity import RoleChange, get_user, list_users, seed_directory, set_role
@@ -50,6 +53,31 @@ def main(argv: list[str] | None = None) -> int:
     approve_cmd.add_argument("--reject", action="store_const", const=Decision.REJECT, default=Decision.APPROVE, dest="decision")
 
     commands.add_parser("eval", help="run the golden evaluation set")
+    commands.add_parser("workflow-eval", help="run the workflow cases offline")
+
+    workflow_cmd = commands.add_parser("workflow", help="cross-department workflow: HR -> procurement -> finance")
+    flows = workflow_cmd.add_subparsers(dest="flow", required=True)
+    flow_start = flows.add_parser("start", help="start from a request sentence")
+    flow_start.add_argument("--user", required=True)
+    flow_start.add_argument("request")
+    flow_boq = flows.add_parser("boq", help="start from a BOQ file (xlsx, csv, pdf)")
+    flow_boq.add_argument("--user", required=True)
+    flow_boq.add_argument("file", type=Path)
+    flow_approve = flows.add_parser("approve", help="approve or reject the waiting gate")
+    flow_approve.add_argument("run_id")
+    flow_approve.add_argument("--approver", required=True)
+    flow_approve.add_argument("--reject", action="store_const", const=Decision.REJECT, default=Decision.APPROVE, dest="decision")
+    flow_resume = flows.add_parser("resume", help="finish a run that stopped between steps (crash, failed write)")
+    flow_resume.add_argument("run_id")
+    flow_resume.add_argument("--user", help="run as this user (default: the requester)")
+    flow_show = flows.add_parser("show", help="timeline of a run")
+    flow_show.add_argument("run_id")
+    flow_show.add_argument("--user", help="view as this user (default: the requester)")
+
+    check_cmd = commands.add_parser("boq-check", help="parse a BOQ and report counts (and accuracy with --expected)")
+    check_cmd.add_argument("file", type=Path)
+    check_cmd.add_argument("--expected", type=Path)
+    check_cmd.add_argument("--parser", choices=[kind.value for kind in ParserKind], help="default: RAG_BOQ_PARSER or tabular")
 
     db_cmd = commands.add_parser("db", help="Postgres: create tables and seed users and document access")
     db_cmd.add_argument("action", choices=sorted(_DB_ACTIONS))
@@ -151,7 +179,89 @@ def _role(args: argparse.Namespace) -> int:
     return _EXIT_OK
 
 
-_HANDLERS = {"users": _users, "ingest": _ingest, "ask": _ask, "agent": _agent, "approve": _approve, "eval": _eval, "db": _db, "role": _role}
+def _workflow(args: argparse.Namespace) -> int:
+    from .workflow import WfStatus
+
+    runner = build_workflows(build_system())
+    try:
+        if args.flow == "start":
+            view = runner.start_request(get_user(args.user), args.request)
+        elif args.flow == "boq":
+            view = runner.start_boq(get_user(args.user), args.file)
+        elif args.flow == "approve":
+            view = runner.decide(args.run_id, get_user(args.approver), args.decision)
+        elif args.flow == "resume":
+            view = runner.resume(args.run_id, get_user(args.user or runner.requester_of(args.run_id) or "sara"))
+        else:
+            viewer = args.user or runner.requester_of(args.run_id)
+            view = runner.view(args.run_id, get_user(viewer)) if viewer else runner.view(args.run_id, get_user("sara"))
+    except (PermissionError, LookupError, ValueError, BoqParseError) as error:
+        print(f"error: {error}")
+        return _EXIT_FAIL
+    _print_run(view)
+    return _EXIT_FAIL if view.status in (WfStatus.STOPPED, WfStatus.REJECTED) else _EXIT_OK
+
+
+def _print_run(view) -> None:
+    """Timeline, money and queues. Counts only for runs on private files."""
+    print(f"run {view.run_id}  [{view.entry.value}]  status: {view.status.value}")
+    for step in view.steps:
+        print(f"  {step['status']:<8} {step['name']:<18} {_short(step['detail'], view.private)}")
+    if view.reason:
+        print(f"  reason: {view.reason}")
+    print(f"  total AED {view.total:,.2f}   budget left AED {view.budget_remaining or 0:,.2f}   approver: {' or '.join(view.approver_roles) or '-'}")
+    if view.private:
+        print(f"  private file: {len(view.lines)} priced, {len(view.rfq)} RFQ, {len(view.review)} in review (text not shown)")
+    else:
+        for line in view.lines:
+            label = line.get("item_no", line["code"])
+            print(f"    {label:<6} {line['code']:<14} {line['quantity']:>8} {line['unit']:<4} x {line['unit_price']:>9} = {line['total']:>11}  {line['vendor']}")
+        for item in view.rfq:
+            print(f"    RFQ    {item['item_no']:<6} {item['description'][:50]:<50}  {item['reason']}")
+        for item in view.review:
+            print(f"    REVIEW {item['item_no']:<6} {item['reason']}")
+    for flag in view.flags if not view.private else []:
+        print(f"  flag: {flag}")
+    if view.refused_vendors:
+        print(f"  refused vendors: {', '.join(view.refused_vendors)}")
+    if view.policy:
+        policy = view.policy
+        print(f"  policy: {policy['title']} > {policy['section']}" if policy.get("visible") else "  policy: cited, not visible to you")
+    for gate, note in view.summaries.items():
+        print(f"  note for {gate}: {note.replace(chr(10), ' / ')}")
+    if view.pending_gate:
+        print(f"  waiting for {view.pending_gate.value}: uv run rag workflow approve {view.run_id} --approver <user>")
+    print(f"  model cost ${view.cost_usd:.4f}, {view.tokens} tokens")
+
+
+def _short(detail: dict, private: bool) -> str:
+    keep = {key: value for key, value in detail.items() if not (private and isinstance(value, str) and not key.endswith("_aed"))}
+    return ", ".join(f"{key}={value}" for key, value in keep.items())[:110]
+
+
+def _boq_check(args: argparse.Namespace) -> int:
+    from .boq import check_report
+
+    kind = ParserKind(args.parser) if args.parser else parser_kind()
+    try:
+        report = check_report(args.file, kind, args.expected)
+    except BoqParseError as error:
+        print(f"error: {error}")
+        return _EXIT_FAIL
+    print(json.dumps(report, indent=2))
+    return _EXIT_OK
+
+
+def _workflow_eval(_: argparse.Namespace) -> int:
+    from .workflow_eval import format_workflow_report, run_workflow_eval
+
+    results = run_workflow_eval(build_system())
+    print(format_workflow_report(results))
+    return _EXIT_OK if all(result.passed for result in results) else _EXIT_FAIL
+
+
+_HANDLERS = {"users": _users, "ingest": _ingest, "ask": _ask, "agent": _agent, "approve": _approve, "eval": _eval, "db": _db, "role": _role,
+             "workflow": _workflow, "boq-check": _boq_check, "workflow-eval": _workflow_eval}
 
 if __name__ == "__main__":
     sys.exit(main())

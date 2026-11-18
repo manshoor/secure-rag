@@ -15,7 +15,15 @@ dependencies = [
   "psycopg[binary]>=3.3.9",
   "psycopg-pool>=3.3.3",
   "langgraph-checkpoint-postgres>=3.2.1",
+  "openpyxl>=3.1.5",
+  "python-multipart>=0.0.20",
+  "pydantic>=2.10",
 ]
+
+# Optional BOQ parsers: uv sync --extra docling / --extra llamaparse
+[project.optional-dependencies]
+docling = ["docling>=2.140"]
+llamaparse = ["llama-cloud>=2.19"]
 
 [project.scripts]
 rag = "secure_rag.cli:main"
@@ -24,6 +32,7 @@ rag = "secure_rag.cli:main"
 dev = [
     "httpx>=0.28.1",
     "pytest",
+    "reportlab>=4.2",  # writes the sample BOQ PDF (scripts/make_samples.py)
 ]
 
 [build-system]
@@ -36,3 +45,4 @@ packages = ["src/secure_rag"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["docling: needs the docling extra (uv sync --extra docling)"]

@@ -1,0 +1,20 @@
+{
+  "_note": "Invented stand-in for the ERP budget module. Remaining budget in AED.",
+  "budgets": [
+    {
+      "company": "alpha-construction",
+      "department": "hr",
+      "remaining_aed": "150000.00"
+    },
+    {
+      "company": "alpha-construction",
+      "department": "projects",
+      "remaining_aed": "600000.00"
+    },
+    {
+      "company": "beta-properties",
+      "department": "hr",
+      "remaining_aed": "80000.00"
+    }
+  ]
+}

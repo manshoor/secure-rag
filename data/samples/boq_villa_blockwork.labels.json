@@ -1,0 +1,128 @@
+[
+  {
+    "item_no": "A1",
+    "description": "Solid concrete block wall 100mm thick below DPC",
+    "unit": "m2",
+    "quantity": "85",
+    "section": "SUBSTRUCTURE BLOCKWORK"
+  },
+  {
+    "item_no": "A2",
+    "description": "Damp proof course membrane under blockwork",
+    "unit": "lm",
+    "quantity": "120",
+    "section": "SUBSTRUCTURE BLOCKWORK"
+  },
+  {
+    "item_no": "B1",
+    "description": "Hollow concrete block wall 200mm thick, external",
+    "unit": "m2",
+    "quantity": "410",
+    "section": "GROUND FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "B2",
+    "description": "Hollow concrete block wall 150mm thick, internal",
+    "unit": "m2",
+    "quantity": "265",
+    "section": "GROUND FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "B3",
+    "description": "Precast concrete lintel over openings",
+    "unit": "lm",
+    "quantity": "64",
+    "section": "GROUND FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "B4",
+    "description": "Expanded metal mesh at block and column joints",
+    "unit": "lm",
+    "quantity": "180",
+    "section": "GROUND FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "B5",
+    "description": "Stainless steel wall ties",
+    "unit": "nos",
+    "quantity": "900",
+    "section": "GROUND FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "C1",
+    "description": "Hollow concrete block wall 200mm thick",
+    "unit": "m2",
+    "quantity": "360",
+    "section": "FIRST FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "C2",
+    "description": "Hollow concrete block wall 150mm thick",
+    "unit": "m2",
+    "quantity": "240",
+    "section": "FIRST FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "C3",
+    "description": "Precast concrete lintel over openings",
+    "unit": "lm",
+    "quantity": "58",
+    "section": "FIRST FLOOR BLOCKWORK"
+  },
+  {
+    "item_no": "D1",
+    "description": "Internal cement plaster 15mm thick to walls",
+    "unit": "m2",
+    "quantity": "1100",
+    "section": "FINISHES"
+  },
+  {
+    "item_no": "D2",
+    "description": "External cement plaster 20mm thick",
+    "unit": "m2",
+    "quantity": "760",
+    "section": "FINISHES"
+  },
+  {
+    "item_no": "D3",
+    "description": "Emulsion paint to internal walls, two coats",
+    "unit": "m2",
+    "quantity": "1100",
+    "section": "FINISHES"
+  },
+  {
+    "item_no": "E1",
+    "description": "Ready mix concrete grade C30 to tie beams",
+    "unit": "m3",
+    "quantity": "18.5",
+    "section": "CONCRETE AND STEEL"
+  },
+  {
+    "item_no": "E2",
+    "description": "High yield steel rebar T12",
+    "unit": "kg",
+    "quantity": "2400",
+    "section": "CONCRETE AND STEEL"
+  },
+  {
+    "item_no": "E3",
+    "description": "Non shrink cementitious grout",
+    "unit": "kg",
+    "quantity": "150",
+    "section": "CONCRETE AND STEEL"
+  },
+  {
+    "item_no": "F1",
+    "description": "Scaffolding access for blockwork",
+    "unit": "m2",
+    "quantity": "950",
+    "section": "TEMPORARY WORKS"
+  },
+  {
+    "item_no": "F2",
+    "description": "Bitumen waterproofing membrane",
+    "unit": "m2",
+    "quantity": "140",
+    "section": "TEMPORARY WORKS"
+  }
+]
