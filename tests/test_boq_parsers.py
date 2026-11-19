@@ -174,17 +174,6 @@ def test_excel_that_lies_about_its_size_is_refused_without_inflating_it(tmp_path
     assert peak < 50_000_000
 
 
-def test_excel_part_read_whole_is_capped_below_the_total(tmp_path):
-    """openpyxl parses some parts as one XML tree: those get a smaller cap than sheets."""
-    import zipfile
-
-    big = tmp_path / "big_part.xlsx"
-    with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", b"<a/>" * 1_000_000)
-    with pytest.raises(BoqParseError, match="too large"):
-        parse_boq(big, ParserKind.TABULAR)
-
-
 def test_docling_backend_checks_excel_size_first(tmp_path, monkeypatch):
     import zipfile
 
@@ -196,3 +185,104 @@ def test_docling_backend_checks_excel_size_first(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "docling", None)  # the size check must come before any import
     with pytest.raises(BoqParseError, match="too large"):
         boq_parser._docling_rows(bomb)
+
+
+def test_real_sheet_over_two_megabytes_still_parses(tmp_path):
+    from openpyxl import Workbook
+
+    path = tmp_path / "long.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Item", "Description", "Unit", "Qty"])
+    for index in range(25_000):
+        sheet.append([f"A{index}", f"Hollow concrete block 200 mm, wall type {index}", "m2", index + 1])
+    book.save(path)
+    assert parse_boq(path, ParserKind.TABULAR)
+
+
+def test_excel_reader_over_its_memory_limit_is_stopped(tmp_path, monkeypatch):
+    """XML that parses into a large tree: the child process is killed, the parent stays small."""
+    import zipfile
+
+    from secure_rag import boq_parser
+
+    heavy = tmp_path / "heavy.xlsx"
+    with zipfile.ZipFile(heavy, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types>" + b"<a/>" * 2_000_000 + b"</Types>")
+    monkeypatch.setattr(boq_parser, "_CHILD_MEMORY_BYTES", 150_000_000)
+    with pytest.raises(BoqParseError, match="too large to read"):
+        parse_boq(heavy, ParserKind.TABULAR)
+
+
+def test_excel_reader_that_runs_too_long_is_stopped(monkeypatch):
+    from secure_rag import boq_parser
+
+    monkeypatch.setattr(boq_parser, "_CHILD_SECONDS", 0.01)
+    with pytest.raises(BoqParseError, match="took too long"):
+        parse_boq(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx", ParserKind.TABULAR)
+
+
+def test_excel_reader_errors_hold_no_file_text(tmp_path):
+    """A private BOQ's text never reaches an error message."""
+    broken = tmp_path / "broken.xlsx"
+    broken.write_bytes(b"PK\x03\x04 Secret Villa Client Name")
+    with pytest.raises(BoqParseError) as raised:
+        parse_boq(broken, ParserKind.TABULAR)
+    assert "Secret" not in str(raised.value)
+
+
+def test_excel_reader_output_is_capped(monkeypatch):
+    """One shared string in every cell is small XML but huge output: the child stops first."""
+    from secure_rag import boq_parser
+
+    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_CHARS", 1000)
+    with pytest.raises(BoqParseError, match="too large to read"):
+        parse_boq(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx", ParserKind.TABULAR)
+
+
+def test_excel_reader_cells_are_cut_to_the_description_limit(tmp_path):
+    from openpyxl import Workbook
+
+    path = tmp_path / "long_cell.xlsx"
+    book = Workbook()
+    book.active.append(["Item", "Description", "Unit", "Qty"])
+    book.active.append(["1", "x" * 5000, "m2", 10])
+    book.save(path)
+    from secure_rag.boq_parser import _xlsx_rows_in_child
+
+    assert max(len(cell) for row in _xlsx_rows_in_child(path) for cell in row) <= 500
+
+
+def test_excel_reader_does_not_load_numpy():
+    """numpy's maths library starts a thread per CPU on import, which a memory rlimit can refuse."""
+    import subprocess
+
+    code = "import sys, secure_rag._xlsx_child as c; c._block_heavy_imports(); import openpyxl; print(sys.modules.get('numpy') is None)"
+    assert subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True).stdout.strip() == "True"
+
+
+def test_excel_readers_at_once_are_limited(monkeypatch):
+    import threading
+
+    from secure_rag import boq_parser
+
+    monkeypatch.setattr(boq_parser, "_CHILD_SLOTS", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(boq_parser, "_SLOT_WAIT_SECONDS", 0.05)
+    boq_parser._CHILD_SLOTS.acquire()
+    with pytest.raises(BoqParseError, match="busy"):
+        parse_boq(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx", ParserKind.TABULAR)
+
+
+def test_child_reports_too_large_when_the_reply_does_not_fit(monkeypatch, capsys):
+    import json
+
+    from secure_rag import _xlsx_child
+
+    def no_memory(*args, **kwargs):
+        raise MemoryError
+
+    monkeypatch.setattr(_xlsx_child.json, "dumps", no_memory)
+    monkeypatch.setattr(_xlsx_child, "_limit_memory", lambda limit: None)
+    monkeypatch.setattr(_xlsx_child, "_block_heavy_imports", lambda: None)  # in-process: keep numpy for other tests
+    _xlsx_child.main([str(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx"), "100", "40", "20000000", "512000000", "1000000", "500"])
+    assert json.loads(capsys.readouterr().out) == {"error": "too_large"}

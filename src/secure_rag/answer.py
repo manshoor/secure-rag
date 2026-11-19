@@ -83,6 +83,7 @@ class Answer:
     seconds: float
     trace_id: str = ""  # Langfuse trace, when tracing is on
     debug: str = ""  # refused draft and why, only with RAG_TRACE_CONTENT=full; never audited or sent to the API
+    shown_docs: tuple[str, ...] = ()  # every document the composer saw, cited or not
 
 
 class Composer(Protocol):
@@ -261,4 +262,4 @@ def _finish(user: User, question: str, sources: list[Source], answer: Answer) ->
         output_tokens=answer.usage.output_tokens,
         seconds=round(answer.seconds, 3),
     )
-    return answer
+    return replace(answer, shown_docs=tuple(sorted({s.hit.chunk.doc_id for s in sources})))

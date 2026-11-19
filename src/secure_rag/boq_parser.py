@@ -16,28 +16,35 @@ RAG_ALLOW_CLOUD_PARSE=yes is set for that run.
 """
 
 import csv
+import json
 import os
-import copy
 import re
-import zipfile
+import subprocess
+import sys
+import threading
+import time
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
-from . import config
+from . import _xlsx_child, config
 
 _MAX_DESCRIPTION = 500
 _MAX_LINES = 5000
 _MAX_ROWS = 20000  # rows read from a file before giving up on the rest
 _MAX_COLUMNS = 40
-# An .xlsx is a zip: a small upload can expand to gigabytes. Checked before openpyxl reads it.
+# An .xlsx is a zip: a small upload can expand to gigabytes. Counted in the child before openpyxl reads it.
 _MAX_UNZIPPED_BYTES = 20_000_000
-_MAX_WHOLE_PART_BYTES = 2_000_000  # parts openpyxl parses as one XML tree (all but sheets and shared strings)
-_STREAMED_PARTS = re.compile(r"xl/worksheets/[^/]+\.xml|xl/sharedStrings\.xml")
-_UNZIP_CHUNK = 65536
-_NO_SIZE_LIMIT = 2**62  # zipfile stops at the real end of the data; our counter enforces the limit
+# The child process that reads an .xlsx: killed past this memory or run time.
+_CHILD_MODULE = "secure_rag._xlsx_child"
+_CHILD_MEMORY_BYTES = 512_000_000
+_CHILD_SECONDS = 30.0
+_CHILD_POLL_SECONDS = 0.05
+_MAX_OUTPUT_CHARS = 5_000_000  # the child's reply; the parent holds a few times this while decoding
+_CHILD_SLOTS = threading.BoundedSemaphore(2)  # children at once, per server process
+_SLOT_WAIT_SECONDS = 30.0
 _MAX_QUANTITY = Decimal("1000000000")
 # Plain quantities only: 1200, 1,200, 1,200.50, 18.5. Anything else ("1.200,50", "120 m2", "TBC") is unreadable.
 _QUANTITY_RE = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?|\d+(\.\d+)?")
@@ -131,55 +138,83 @@ def _tabular_rows(path: Path) -> list[list[str]]:
         with path.open(newline="", encoding="utf-8-sig") as handle:
             return [row[:_MAX_COLUMNS] for row, _ in zip(csv.reader(handle), range(_MAX_ROWS))]
 
-    from openpyxl import load_workbook
-
-    _check_unzipped_size(path)
-    book = load_workbook(path, read_only=True, data_only=True)
-    rows: list[list[str]] = []
-    for sheet in book.worksheets:
-        for row in sheet.iter_rows(max_col=_MAX_COLUMNS, values_only=True):
-            if len(rows) >= _MAX_ROWS:
-                break
-            rows.append([_cell(value) for value in row])
-    book.close()
-    return rows
+    return _xlsx_rows_in_child(path)
 
 
-def _check_unzipped_size(path: Path) -> None:
-    """Refuse a workbook whose contents unzip past the limits.
+def _xlsx_rows_in_child(path: Path) -> list[list[str]]:
+    """Read an .xlsx in a child process with memory and time limits.
 
-    The sizes a zip declares can lie, and zipfile inflates a whole entry before
-    trimming it to the declared size. So each entry is streamed in small chunks
-    and its real size counted; memory stays at one chunk.
+    openpyxl can turn a small upload into a large XML tree, whatever the zip
+    declares. The child sets a memory rlimit where the OS allows it (Linux);
+    this side also watches the child's memory and run time, and kills it past
+    either limit. See _xlsx_child for the child's side.
     """
-    total = 0
-    with zipfile.ZipFile(path) as archive:
-        for entry in archive.infolist():
-            limit = _MAX_UNZIPPED_BYTES if _STREAMED_PARTS.fullmatch(entry.filename) else _MAX_WHOLE_PART_BYTES
-            size = _streamed_size(archive, entry, min(limit, _MAX_UNZIPPED_BYTES - total))
-            if size != entry.file_size:
-                raise BoqParseError("the workbook is damaged: a part does not match its declared size")
-            total += size
+    # A few children at once: each may use up to the memory limit.
+    if not _CHILD_SLOTS.acquire(timeout=_SLOT_WAIT_SECONDS):
+        raise BoqParseError("the server is busy reading other workbooks; try again shortly")
+    try:
+        return _run_child(path)
+    finally:
+        _CHILD_SLOTS.release()
 
 
-def _streamed_size(archive: zipfile.ZipFile, entry: zipfile.ZipInfo, limit: int) -> int:
-    """Real unzipped size of one entry, stopping as soon as it passes `limit`."""
-    # Lift the declared size so zipfile reads to the true end of the data, not the claim.
-    unbounded = copy.copy(entry)
-    unbounded.file_size = _NO_SIZE_LIMIT
-    size = 0
-    with archive.open(unbounded) as stream:
-        while chunk := stream.read(_UNZIP_CHUNK):
-            size += len(chunk)
-            if size > limit:
-                raise BoqParseError(f"the workbook is too large when unzipped (limits: {_MAX_UNZIPPED_BYTES // 1_000_000} MB in all, "
-                                    f"{_MAX_WHOLE_PART_BYTES // 1_000_000} MB for parts other than sheets)")
-    return size
+def _run_child(path: Path) -> list[list[str]]:
+    limits = (_MAX_ROWS, _MAX_COLUMNS, _MAX_UNZIPPED_BYTES, _CHILD_MEMORY_BYTES, _MAX_OUTPUT_CHARS, _MAX_DESCRIPTION)
+    args = [str(value) for value in (path, *limits)]
+    child = subprocess.Popen(
+        [sys.executable, "-I", "-m", _CHILD_MODULE, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    deadline = time.monotonic() + _CHILD_SECONDS
+    try:
+        while True:
+            try:
+                output, _ = child.communicate(timeout=_CHILD_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+
+            # Watch from outside: the child cannot run its own checks while openpyxl parses.
+            if _rss_bytes(child.pid) > _CHILD_MEMORY_BYTES:
+                raise BoqParseError("the workbook is too large to read")
+            if time.monotonic() > deadline:
+                raise BoqParseError("reading the workbook took too long")
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate()
+    return _child_rows(output, child.returncode)
+
+
+def _child_rows(output: bytes, returncode: int) -> list[list[str]]:
+    """Rows from the child's JSON reply. Errors hold a code and a type name, never file text."""
+    try:
+        reply = json.loads(output)
+    except ValueError:
+        reply = {}
+    if "rows" in reply:
+        return reply["rows"]
+    if reply.get("error") == _xlsx_child.ERROR_TOO_LARGE or returncode < 0:
+        raise BoqParseError("the workbook is too large to read")
+    kind = reply.get("kind", "no reply")
+    raise BoqParseError(f"the file could not be read as a BOQ ({kind if kind.isidentifier() else 'error'})")
+
+
+def _rss_bytes(pid: int) -> int:
+    """Resident memory of a process, or 0 once it has gone. /proc on Linux, ps elsewhere."""
+    status = Path(f"/proc/{pid}/status")
+    if status.exists():
+        for line in status.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+        return 0
+    found = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(found) * 1024 if found.isdigit() else 0
 
 
 def _docling_rows(path: Path) -> list[list[str]]:
+    # Excel always goes through the limited child reader; Docling handles PDFs and scans.
     if path.suffix.lower() == ".xlsx":
-        _check_unzipped_size(path)
+        return _xlsx_rows_in_child(path)
     try:
         from docling.document_converter import DocumentConverter
     except ImportError as error:

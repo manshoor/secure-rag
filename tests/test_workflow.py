@@ -275,3 +275,86 @@ def test_policy_text_is_not_served_after_the_document_is_narrowed(system, monkey
     narrowed = DocAccess("alpha-construction", frozenset({"finance", "executive"}))
     monkeypatch.setattr(store, "current_access", lambda stamped: {doc_id: narrowed for doc_id in stamped})
     assert wf.view(run.run_id, omar).policy == {"visible": False}
+
+
+def test_cached_policy_text_needs_every_cited_document_readable(system, monkeypatch):
+    """The cached answer may also cite another document: narrowing that one hides it too."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from secure_rag import store
+    from secure_rag.agent import Decision
+    from secure_rag.answer import Draft
+    from secure_rag.identity import DocAccess, get_user
+    from secure_rag.intake import OfflineIntake
+    from secure_rag.workflow import WorkflowRunner
+
+    steel = "alpha-subcontract-steelworks"
+
+    class PolicyAndSteel:
+        """Retrieval returns one policy chunk and one steel subcontract chunk."""
+
+        def __getattr__(self, name):
+            return getattr(system.store, name)
+
+        def search(self, user, query, limit):
+            policy = system.store.search(user, query, 1)
+            other = [hit for hit in system.store.search(user, "steel subcontract monthly invoices", 4) if hit.chunk.doc_id == steel]
+            return policy + other[:1]
+
+    class CitesBoth:
+        def compose(self, question, sources):
+            text = " ".join(f"{s.hit.chunk.text.split('. ')[0].rstrip('.')} [{s.source_id}]." for s in sources)
+            return Draft(text, [s.source_id for s in sources], refused=False)
+
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    wf = WorkflowRunner(PolicyAndSteel(), CitesBoth(), OfflineIntake(), InMemorySaver())
+    run = wf.start_request(get_user("sara"), "18 site engineers join on 15 Jan. Order laptops and safety kits.")
+    omar = get_user("omar")
+    wf.decide(run.run_id, omar, Decision.APPROVE)
+    assert wf.view(run.run_id, omar).policy["visible"] is True
+
+    # Only the steel subcontract is narrowed; the policy document stays readable.
+    real = store.current_access
+    narrowed = DocAccess("alpha-construction", frozenset({"legal"}))
+    monkeypatch.setattr(store, "current_access", lambda stamped: {d: narrowed if d == steel else a for d, a in real(stamped).items()})
+    assert wf.view(run.run_id, omar).policy == {"visible": False}
+
+
+def test_cached_policy_text_needs_every_shown_document_readable(system, monkeypatch):
+    """A model may put another source's words under the policy citation: check what it was shown."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from secure_rag import store
+    from secure_rag.agent import Decision
+    from secure_rag.answer import Draft
+    from secure_rag.identity import DocAccess, get_user
+    from secure_rag.intake import OfflineIntake
+    from secure_rag.workflow import WorkflowRunner
+
+    steel = "alpha-subcontract-steelworks"
+
+    class PolicyAndSteel:
+        def __getattr__(self, name):
+            return getattr(system.store, name)
+
+        def search(self, user, query, limit):
+            policy = system.store.search(user, query, 1)
+            other = [hit for hit in system.store.search(user, "subcontract parties supply and erection of structural steel", 4) if hit.chunk.doc_id == steel]
+            return policy + other[:1]
+
+    class CitesPolicyOnly:
+        def compose(self, question, sources):
+            text = " ".join(f"{s.hit.chunk.text.split('. ')[0].rstrip('.')} [S1]." for s in sources)
+            return Draft(text, ["S1"], refused=False)
+
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    wf = WorkflowRunner(PolicyAndSteel(), CitesPolicyOnly(), OfflineIntake(), InMemorySaver())
+    run = wf.start_request(get_user("sara"), "18 site engineers join on 15 Jan. Order laptops and safety kits.")
+    omar = get_user("omar")
+    wf.decide(run.run_id, omar, Decision.APPROVE)
+    assert wf.view(run.run_id, omar).policy["visible"] is True
+
+    real = store.current_access
+    narrowed = DocAccess("alpha-construction", frozenset({"legal"}))
+    monkeypatch.setattr(store, "current_access", lambda stamped: {d: narrowed if d == steel else a for d, a in real(stamped).items()})
+    assert wf.view(run.run_id, omar).policy == {"visible": False}

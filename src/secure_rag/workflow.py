@@ -614,13 +614,17 @@ class WorkflowRunner:
                     "title": cited[0].title,
                     "section": cited[0].section,
                     "text": answer.text,
+                    "shown_docs": answer.shown_docs,
                 }
 
-        # Cached text is served only while the policy document is still readable now.
+        # Cached text is served only while every document the model saw is still readable now:
+        # its citations can misname where a sentence came from.
         cached = self._policy_cache[key]
-        if cached["visible"] and not self._store.can_read_doc(viewer, cached["doc_id"]):
+        if not cached["visible"]:
+            return cached
+        if not all(self._store.can_read_doc(viewer, doc_id) for doc_id in cached["shown_docs"]):
             return {"visible": False}
-        return cached
+        return {name: value for name, value in cached.items() if name != "shown_docs"}
 
     def _lock_for(self, run_id: str) -> threading.Lock:
         with self._locks_guard:
