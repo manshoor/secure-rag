@@ -19,6 +19,7 @@ import csv
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -40,11 +41,13 @@ _MAX_UNZIPPED_BYTES = 20_000_000
 # The child process that reads an .xlsx: killed past this memory or run time.
 _CHILD_MODULE = "secure_rag._xlsx_child"
 _CHILD_MEMORY_BYTES = 512_000_000
-_CHILD_SECONDS = 30.0
+_CHILD_SECONDS = 10.0  # a real BOQ reads in about a second; a waiting upload holds an API thread
+_CHILD_CPU_SECONDS = int(_CHILD_SECONDS) + 1  # the child's own limit, for when this process dies first
 _CHILD_POLL_SECONDS = 0.05
-_MAX_OUTPUT_BYTES = 5_000_000  # the child's encoded reply; the parent holds a few times this while decoding
+_MAX_OUTPUT_BYTES = 10_000_000  # the child's UTF-8 reply; decoded, about 110 MB at most here (emoji text costs 4 bytes a character)
 _CHILD_SLOTS = threading.BoundedSemaphore(2)  # children at once, per server process
-_SLOT_WAIT_SECONDS = 30.0
+_SLOT_WAIT_SECONDS = 5.0  # longer than one large read (about 3 s); then "busy", rather than holding an API thread
+_PS_SECONDS = 2.0
 _MAX_QUANTITY = Decimal("1000000000")
 # Plain quantities only: 1200, 1,200, 1,200.50, 18.5. Anything else ("1.200,50", "120 m2", "TBC") is unreadable.
 _QUANTITY_RE = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?|\d+(\.\d+)?")
@@ -159,7 +162,7 @@ def _xlsx_rows_in_child(path: Path) -> list[list[str]]:
 
 
 def _run_child(path: Path) -> list[list[str]]:
-    limits = (_MAX_ROWS, _MAX_COLUMNS, _MAX_UNZIPPED_BYTES, _CHILD_MEMORY_BYTES, _MAX_OUTPUT_BYTES, _MAX_DESCRIPTION)
+    limits = (_MAX_ROWS, _MAX_COLUMNS, _MAX_UNZIPPED_BYTES, _CHILD_MEMORY_BYTES, _MAX_OUTPUT_BYTES, _MAX_DESCRIPTION, _CHILD_CPU_SECONDS)
     args = [str(value) for value in (path, *limits)]
     child = subprocess.Popen(
         [sys.executable, "-I", "-m", _CHILD_MODULE, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
@@ -193,8 +196,12 @@ def _child_rows(output: bytes, returncode: int) -> list[list[str]]:
         reply = {}
     if "rows" in reply:
         return reply["rows"]
-    if reply.get("error") == _xlsx_child.ERROR_TOO_LARGE or returncode < 0:
+    if reply.get("error") == _xlsx_child.ERROR_TOO_LARGE:
         raise BoqParseError("the workbook is too large to read")
+    if returncode == -signal.SIGXCPU:
+        raise BoqParseError("reading the workbook took too long")
+    if returncode < 0:  # killed by a signal: the cause is unknown
+        raise BoqParseError("the file could not be read as a BOQ (the reader stopped)")
     kind = reply.get("kind", "no reply")
     raise BoqParseError(f"the file could not be read as a BOQ ({kind if kind.isidentifier() else 'error'})")
 
@@ -207,7 +214,11 @@ def _rss_bytes(pid: int) -> int:
             if line.startswith("VmRSS:"):
                 return int(line.split()[1]) * 1024
         return 0
-    found = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    # A stuck ps skips one check; the wall-clock deadline still applies.
+    try:
+        found = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=_PS_SECONDS).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return 0
     return int(found) * 1024 if found.isdigit() else 0
 
 

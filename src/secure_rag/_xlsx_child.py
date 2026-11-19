@@ -1,10 +1,11 @@
 """Reads one .xlsx in a child process, so a hostile workbook cannot exhaust the server.
 
-    boq_parser ──spawn──► python -I -m secure_rag._xlsx_child <path> <rows> <cols> <bytes> <memory> <output> <cell>
+    boq_parser ──spawn──► python -I -m secure_rag._xlsx_child <path> <rows> <cols> <bytes> <memory> <output> <cell> <cpu>
                               1. block numpy, then a memory rlimit where the OS allows it (Linux)
+                                 and a CPU-time rlimit, so an orphaned child still ends
                               2. stream every zip entry, count real sizes (declared sizes can lie)
                               3. openpyxl read-only ─► rows of text cells, each cell and the reply capped
-                          ◄── stdout: {"rows": [...]} or {"error": "<code>", "kind": "<type>"}
+                          ◄── stdout, UTF-8: {"rows": [...]} or {"error": "<code>", "kind": "<type>"}
     boq_parser also watches this process's memory and run time, and kills it past its limits.
 
 Errors carry a code and an exception type name only, never text from the file.
@@ -21,7 +22,7 @@ ERROR_UNREADABLE = "unreadable"
 
 _UNZIP_CHUNK = 65536
 _CELL_SEPARATOR = 2  # ", " between cells in the JSON reply
-_TOO_LARGE_REPLY = '{"error": "too_large"}'  # a literal: building it must not need memory
+_TOO_LARGE_REPLY = b'{"error": "too_large"}'  # a literal: building it must not need memory
 _NO_SIZE_LIMIT = 2**62  # zipfile then reads to the real end of the data; the counter enforces the limit
 
 
@@ -31,19 +32,20 @@ class _TooLarge(Exception):
 
 def main(argv: list[str]) -> None:
     path = argv[0]
-    max_rows, max_columns, max_unzipped, memory, max_output, max_cell = (int(value) for value in argv[1:7])
+    max_rows, max_columns, max_unzipped, memory, max_output, max_cell, cpu = (int(value) for value in argv[1:8])
     _block_heavy_imports()
     _limit_memory(memory)
+    _limit_cpu(cpu)
 
     # The reply is built inside the try: running out of memory there is still "too large".
     try:
         _check_unzipped_size(path, max_unzipped)
-        reply = json.dumps({"rows": _rows(path, max_rows, max_columns, max_cell, max_output)})
+        reply = json.dumps({"rows": _rows(path, max_rows, max_columns, max_cell, max_output)}, ensure_ascii=False).encode()
     except (_TooLarge, MemoryError):
         reply = _TOO_LARGE_REPLY
     except Exception as error:  # broken zip, bad XML: a code and a type name, no file text
-        reply = '{"error": "%s", "kind": "%s"}' % (ERROR_UNREADABLE, type(error).__name__)
-    sys.stdout.write(reply)
+        reply = ('{"error": "%s", "kind": "%s"}' % (ERROR_UNREADABLE, type(error).__name__)).encode()
+    sys.stdout.buffer.write(reply)
 
 
 def _block_heavy_imports() -> None:
@@ -56,6 +58,16 @@ def _limit_memory(limit: int) -> None:
     """Hard address-space limit. Linux enforces it; macOS refuses it, and the parent's watch applies."""
     try:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        pass
+
+
+def _limit_cpu(seconds: int) -> None:
+    """CPU-time limit: SIGXCPU at the soft limit, SIGKILL a second later. The parent's wall-clock
+    deadline fires first; this one ends a child whose parent died without killing it.
+    A lower inherited hard limit cannot be raised; it already ends the child sooner, so it stays."""
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (seconds, seconds + 1))
     except (ValueError, OSError):
         pass
 
@@ -81,7 +93,8 @@ def _check_unzipped_size(path: str, limit: int) -> None:
 def _rows(path: str, max_rows: int, max_columns: int, max_cell: int, max_output: int) -> list[list[str]]:
     """Rows of text cells. One shared string can fill every cell: the reply size is counted, not the XML.
 
-    Each cell is counted as encoded in the reply: non-ASCII text grows up to 12 bytes per character.
+    Each cell is counted in UTF-8 bytes, as sent. Empty cells at the end of a row are dropped:
+    openpyxl pads every row to the sheet's widest column.
     """
     from openpyxl import load_workbook
 
@@ -93,7 +106,9 @@ def _rows(path: str, max_rows: int, max_columns: int, max_cell: int, max_output:
             if len(rows) >= max_rows:
                 break
             cells = [_cell(value)[:max_cell] for value in row]
-            output += sum(len(json.dumps(cell)) + _CELL_SEPARATOR for cell in cells)
+            while cells and not cells[-1]:
+                cells.pop()
+            output += sum(len(json.dumps(cell, ensure_ascii=False).encode()) + _CELL_SEPARATOR for cell in cells)
             if output > max_output:
                 raise _TooLarge
             rows.append(cells)

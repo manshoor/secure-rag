@@ -1,6 +1,5 @@
 """Parser adapter: backend choice, LlamaParse guard rails (fake client only), boq-check report."""
 
-import os
 import sys
 import types
 from decimal import Decimal
@@ -283,8 +282,9 @@ def test_child_reports_too_large_when_the_reply_does_not_fit(monkeypatch, capsys
 
     monkeypatch.setattr(_xlsx_child.json, "dumps", no_memory)
     monkeypatch.setattr(_xlsx_child, "_limit_memory", lambda limit: None)
+    monkeypatch.setattr(_xlsx_child, "_limit_cpu", lambda seconds: None)
     monkeypatch.setattr(_xlsx_child, "_block_heavy_imports", lambda: None)  # in-process: keep numpy for other tests
-    _xlsx_child.main([str(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx"), "100", "40", "20000000", "512000000", "1000000", "500"])
+    _xlsx_child.main([str(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx"), "100", "40", "20000000", "512000000", "1000000", "500", "11"])
     assert json.loads(capsys.readouterr().out) == {"error": "too_large"}
 
 
@@ -300,6 +300,113 @@ def test_excel_reader_output_cap_counts_encoded_bytes(tmp_path, monkeypatch):
     for index in range(20):
         book.active.append([str(index), "\U0001f9f1" * 40, "m2", 1])  # 40 characters, 160 bytes in UTF-8
     book.save(path)
-    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_BYTES", 6000)  # about 4,300 characters, about 13,000 bytes as JSON
+    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_BYTES", 2500)  # about 1,300 characters, about 3,600 bytes in UTF-8
     with pytest.raises(BoqParseError, match="too large to read"):
         parse_boq(path, ParserKind.TABULAR)
+
+
+def _wide_workbook(path, rows: int, description: str) -> None:
+    """A BOQ whose header has a note in the last column, so every row reads 40 cells wide."""
+    from openpyxl import Workbook
+
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Item", "Description", "Unit", "Qty"] + [""] * 35 + ["Notes"])
+    for index in range(rows):
+        sheet.append([f"A{index}", description, "m2", index + 1])
+    book.save(path)
+
+
+def test_arabic_boq_with_long_descriptions_parses(tmp_path):
+    """Arabic text must not cost 6 bytes a character, and empty columns must not count."""
+    path = tmp_path / "arabic.xlsx"
+    _wide_workbook(path, 3500, ("جدار بلوك خرساني مصمت سماكة مائة مم مع الملاط والتشطيب " * 5)[:250])
+    lines = parse_boq(path, ParserKind.TABULAR)
+    assert len(lines) == 3500
+    assert lines[0].description.startswith("جدار بلوك")
+
+
+def test_twenty_thousand_row_wide_sheet_reads(tmp_path):
+    from secure_rag.boq_parser import _xlsx_rows_in_child
+
+    path = tmp_path / "wide_long.xlsx"
+    _wide_workbook(path, 20_000, "Hollow concrete block wall 200 mm thick with mortar joints, pointing both sides, ground floor zone")
+    rows = _xlsx_rows_in_child(path)
+    assert len(rows) == 20_000  # the row cap counts the header too
+    assert rows[1] == ["A0", rows[1][1], "m2", "1"]  # empty cells at the end are dropped
+
+
+def test_upload_holds_a_server_thread_briefly():
+    """A waiting upload ties up an API worker thread: wait for a slot and read time stay short."""
+    from secure_rag import boq_parser
+
+    assert boq_parser._SLOT_WAIT_SECONDS <= 5
+    assert boq_parser._CHILD_SECONDS <= 10
+
+
+def test_child_stops_itself_after_its_cpu_time():
+    """If the server dies without killing the child, the child still ends on its own."""
+    import signal
+    import subprocess
+
+    code = "import secure_rag._xlsx_child as c; c._limit_cpu(1)\nwhile True: pass"
+    finished = subprocess.run([sys.executable, "-I", "-c", code], timeout=20)
+    assert finished.returncode in (-signal.SIGXCPU, -signal.SIGKILL)
+
+
+def test_child_main_sets_a_cpu_limit(monkeypatch, capsys):
+    from secure_rag import _xlsx_child
+
+    seen = []
+    monkeypatch.setattr(_xlsx_child, "_limit_cpu", seen.append)
+    monkeypatch.setattr(_xlsx_child, "_limit_memory", lambda limit: None)
+    monkeypatch.setattr(_xlsx_child, "_block_heavy_imports", lambda: None)
+    _xlsx_child.main([str(VILLA_XLSX), "100", "40", "20000000", "512000000", "1000000", "500", "11"])
+    capsys.readouterr()
+    assert seen == [11]
+
+
+def test_child_killed_by_cpu_limit_reports_took_too_long():
+    import signal
+
+    from secure_rag.boq_parser import _child_rows
+
+    with pytest.raises(BoqParseError, match="took too long"):
+        _child_rows(b"", -signal.SIGXCPU)
+
+
+def test_child_killed_by_other_signal_is_not_called_too_large():
+    import signal
+
+    from secure_rag.boq_parser import _child_rows
+
+    with pytest.raises(BoqParseError) as raised:
+        _child_rows(b"", -signal.SIGSEGV)
+    assert "too large" not in str(raised.value)
+    assert "could not be read" in str(raised.value)
+
+
+def test_memory_check_has_a_timeout(monkeypatch):
+    import subprocess
+
+    from secure_rag import boq_parser
+
+    def slow_ps(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+    monkeypatch.setattr(boq_parser.subprocess, "run", slow_ps)
+    assert boq_parser._rss_bytes(2**22 + 12345) == 0  # no such process: /proc is absent, ps is asked
+
+
+def test_child_reads_under_a_lower_inherited_cpu_limit():
+    """A tight `ulimit -t` already ends the child early; raising it is refused and must not fail the read."""
+    import json
+    import resource
+    import subprocess
+
+    def low_hard_limit():
+        resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+
+    args = [str(VILLA_XLSX), "100", "40", "20000000", "512000000", "1000000", "500", "11"]
+    done = subprocess.run([sys.executable, "-I", "-m", "secure_rag._xlsx_child", *args], capture_output=True, preexec_fn=low_hard_limit)
+    assert "rows" in json.loads(done.stdout)

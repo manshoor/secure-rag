@@ -73,7 +73,7 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 234 offline tests, about two seconds; 15 Postgres/Qdrant tests skip
+uv run pytest -q                 # 244 offline tests, about 20 seconds; 15 Postgres/Qdrant tests skip
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
 uv run rag ask --user sara "How many leave days can I carry over?"
@@ -155,7 +155,7 @@ Browser: `RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010`, then o
 | `docling` | pdf (and scans), local | `uv sync --extra docling` (first run downloads models) |
 | `llamaparse` | pdf, cloud | `uv sync --extra llamaparse`, `LLAMA_CLOUD_API_KEY` |
 
-An xlsx file is always read in a child process, whatever the parser setting: at most 20 MB unzipped, 500 characters per cell and 5 MB of encoded output, killed past 512 MB of memory or 30 seconds. At most two run at once per server process; a third upload waits up to 30 seconds, then gets a busy error. Linux enforces the memory limit inside the child; macOS does not allow that, so there it is checked every 50 ms and can be exceeded by about 150 MB before the child is stopped.
+An xlsx file is always read in a child process, whatever the parser setting: at most 20 MB unzipped, 500 characters per cell and 10 MB of UTF-8 output (empty cells at the end of a row are not sent), killed past 512 MB of memory or 10 seconds. The child also has its own 11-second CPU limit, so it ends even if the server dies first. At most two run at once per server process; a third upload waits up to 5 seconds, then gets a busy error, so uploads do not hold API threads for long. Linux enforces the memory limit inside the child; macOS does not allow that, so there it is checked every 50 ms and can be exceeded by about 150 MB before the child is stopped.
 
 After installing an extra, use `uv run --no-sync ...`: a plain `uv sync` or `uv run` removes extras it was not asked for.
 
