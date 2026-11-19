@@ -42,7 +42,7 @@ _CHILD_MODULE = "secure_rag._xlsx_child"
 _CHILD_MEMORY_BYTES = 512_000_000
 _CHILD_SECONDS = 30.0
 _CHILD_POLL_SECONDS = 0.05
-_MAX_OUTPUT_CHARS = 5_000_000  # the child's reply; the parent holds a few times this while decoding
+_MAX_OUTPUT_BYTES = 5_000_000  # the child's encoded reply; the parent holds a few times this while decoding
 _CHILD_SLOTS = threading.BoundedSemaphore(2)  # children at once, per server process
 _SLOT_WAIT_SECONDS = 30.0
 _MAX_QUANTITY = Decimal("1000000000")
@@ -159,7 +159,7 @@ def _xlsx_rows_in_child(path: Path) -> list[list[str]]:
 
 
 def _run_child(path: Path) -> list[list[str]]:
-    limits = (_MAX_ROWS, _MAX_COLUMNS, _MAX_UNZIPPED_BYTES, _CHILD_MEMORY_BYTES, _MAX_OUTPUT_CHARS, _MAX_DESCRIPTION)
+    limits = (_MAX_ROWS, _MAX_COLUMNS, _MAX_UNZIPPED_BYTES, _CHILD_MEMORY_BYTES, _MAX_OUTPUT_BYTES, _MAX_DESCRIPTION)
     args = [str(value) for value in (path, *limits)]
     child = subprocess.Popen(
         [sys.executable, "-I", "-m", _CHILD_MODULE, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL

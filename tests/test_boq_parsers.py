@@ -235,7 +235,7 @@ def test_excel_reader_output_is_capped(monkeypatch):
     """One shared string in every cell is small XML but huge output: the child stops first."""
     from secure_rag import boq_parser
 
-    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_CHARS", 1000)
+    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_BYTES", 1000)
     with pytest.raises(BoqParseError, match="too large to read"):
         parse_boq(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx", ParserKind.TABULAR)
 
@@ -286,3 +286,20 @@ def test_child_reports_too_large_when_the_reply_does_not_fit(monkeypatch, capsys
     monkeypatch.setattr(_xlsx_child, "_block_heavy_imports", lambda: None)  # in-process: keep numpy for other tests
     _xlsx_child.main([str(config.SAMPLES_DIR / "boq_villa_blockwork.xlsx"), "100", "40", "20000000", "512000000", "1000000", "500"])
     assert json.loads(capsys.readouterr().out) == {"error": "too_large"}
+
+
+def test_excel_reader_output_cap_counts_encoded_bytes(tmp_path, monkeypatch):
+    """Non-ASCII text grows when encoded: the cap counts bytes sent, not characters."""
+    from openpyxl import Workbook
+
+    from secure_rag import boq_parser
+
+    path = tmp_path / "wide.xlsx"
+    book = Workbook()
+    book.active.append(["Item", "Description", "Unit", "Qty"])
+    for index in range(20):
+        book.active.append([str(index), "\U0001f9f1" * 40, "m2", 1])  # 40 characters, 160 bytes in UTF-8
+    book.save(path)
+    monkeypatch.setattr(boq_parser, "_MAX_OUTPUT_BYTES", 6000)  # about 4,300 characters, about 13,000 bytes as JSON
+    with pytest.raises(BoqParseError, match="too large to read"):
+        parse_boq(path, ParserKind.TABULAR)

@@ -20,7 +20,7 @@ ERROR_TOO_LARGE = "too_large"
 ERROR_UNREADABLE = "unreadable"
 
 _UNZIP_CHUNK = 65536
-_CELL_OVERHEAD = 4  # quotes, comma and space around each cell in the JSON reply
+_CELL_SEPARATOR = 2  # ", " between cells in the JSON reply
 _TOO_LARGE_REPLY = '{"error": "too_large"}'  # a literal: building it must not need memory
 _NO_SIZE_LIMIT = 2**62  # zipfile then reads to the real end of the data; the counter enforces the limit
 
@@ -79,7 +79,10 @@ def _check_unzipped_size(path: str, limit: int) -> None:
 
 
 def _rows(path: str, max_rows: int, max_columns: int, max_cell: int, max_output: int) -> list[list[str]]:
-    """Rows of text cells. One shared string can fill every cell: the reply size is counted, not the XML."""
+    """Rows of text cells. One shared string can fill every cell: the reply size is counted, not the XML.
+
+    Each cell is counted as encoded in the reply: non-ASCII text grows up to 12 bytes per character.
+    """
     from openpyxl import load_workbook
 
     book = load_workbook(path, read_only=True, data_only=True)
@@ -90,7 +93,7 @@ def _rows(path: str, max_rows: int, max_columns: int, max_cell: int, max_output:
             if len(rows) >= max_rows:
                 break
             cells = [_cell(value)[:max_cell] for value in row]
-            output += sum(len(cell) + _CELL_OVERHEAD for cell in cells)
+            output += sum(len(json.dumps(cell)) + _CELL_SEPARATOR for cell in cells)
             if output > max_output:
                 raise _TooLarge
             rows.append(cells)
