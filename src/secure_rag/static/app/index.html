@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure RAG</title>
+<link rel="stylesheet" href="/app/static/tokens.css">
+<link rel="stylesheet" href="/app/static/app.css">
+<script type="module" src="/app/static/app.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <button type="button" class="btn-ghost menu-btn" id="menu" aria-controls="rail" aria-expanded="false">
+        <span>Cases</span><span class="count" id="menu-count" hidden></span>
+      </button>
+      <span class="brand-logo" id="logo"></span>
+      <span class="brand-name">Secure RAG</span>
+      <span class="pill pill-accent" id="mode-badge">Offline</span>
+    </div>
+    <div class="persona">
+      <span class="demo-tag" id="demo-tag" hidden>DEMO</span>
+      <label for="persona" class="muted small">Acting as</label>
+      <select id="persona" class="select"></select>
+      <button type="button" class="btn-ghost" id="large" aria-pressed="false">Large text</button>
+    </div>
+  </header>
+
+  <div class="banner alert-bad" id="offline-banner" role="status" hidden></div>
+
+  <div class="layout">
+    <nav class="rail" id="rail" aria-label="Cases">
+      <button type="button" class="btn-primary" id="new-chat">New chat</button>
+      <section class="rail-group" aria-labelledby="waiting-title">
+        <h2 class="rail-title" id="waiting-title">Waiting on you <span class="count" id="waiting-count" hidden></span></h2>
+        <ul class="rail-list" id="waiting-list"></ul>
+      </section>
+      <section class="rail-group" aria-labelledby="mine-title">
+        <h2 class="rail-title" id="mine-title">My cases</h2>
+        <ul class="rail-list" id="mine-list"></ul>
+      </section>
+    </nav>
+
+    <main class="chat">
+      <div class="log" id="log" aria-live="polite" aria-relevant="additions"></div>
+      <div class="suggestions" id="suggestions"></div>
+      <div class="attached" id="attached" hidden></div>
+      <form class="composer" id="composer">
+        <button type="button" class="attach" id="attach" aria-label="Attach a BOQ file"></button>
+        <input type="file" id="file" accept=".csv,.xlsx,.pdf" hidden>
+        <label for="message" class="visually-hidden">Message</label>
+        <input id="message" class="text-input" type="text" maxlength="2000" autocomplete="off" placeholder="Ask a question, or attach a BOQ to price">
+        <button type="submit" class="btn-primary send">Send</button>
+      </form>
+    </main>
+
+    <aside class="panel" id="panel" aria-label="Case details" hidden>
+      <div class="panel-head">
+        <span class="card-title" id="panel-title"></span>
+        <button type="button" class="btn-ghost panel-close" id="panel-close" aria-label="Close case details">Close</button>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Case views" id="tabs"></div>
+      <div class="tab-panel" role="tabpanel" id="tab-panel" tabindex="0"></div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

@@ -29,6 +29,7 @@ from .policy import money
 _HR_FILE = "hr_new_hires.json"
 _CATALOGUE_FILE = "vendor_catalogue.json"
 _BUDGET_FILE = "budgets.json"
+_VENDOR_FILE = "vendors.json"
 _ACTIVE_STATUS = "confirmed"
 
 # Holds and spend per run, in the runtime folder (written), not the systems folder (read only).
@@ -61,6 +62,20 @@ class CatalogueItem:
     unit: str
     vendor: str
     unit_price: Decimal
+
+
+@dataclass(frozen=True)
+class Vendor:
+    """A vendor master record: who may be asked for a quotation, and for what."""
+
+    vendor_id: str
+    name: str
+    company: str
+    categories: frozenset[str]
+    approved: bool
+    email: str
+    bank_account: str
+    licence_expiry: date
 
 
 @dataclass(frozen=True)
@@ -131,6 +146,23 @@ def catalogue() -> list[CatalogueItem]:
 def approved_vendors() -> set[str]:
     """Vendors that may receive purchase orders (every vendor in the catalogue)."""
     return {item.vendor for item in catalogue()}
+
+
+def vendors() -> list[Vendor]:
+    """Every vendor master record, approved or not."""
+    return [
+        Vendor(
+            row["id"], row["name"], row["company"], frozenset(row["categories"]), row["approved"] is True,
+            row["email"], row["bank_account"], date.fromisoformat(row["licence_expiry"]),
+        )
+        for row in _load(_VENDOR_FILE)["vendors"]
+    ]
+
+
+def vendors_for(category: str, company: str) -> list[Vendor]:
+    """Approved vendors of one company that quote for a category, in id order."""
+    found = [v for v in vendors() if v.approved and v.company == company and category in v.categories]
+    return sorted(found, key=lambda vendor: vendor.vendor_id)
 
 
 def price_items(quantities: dict[str, Decimal]) -> list[PricedLine]:

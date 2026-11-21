@@ -1,0 +1,74 @@
+/* Design tokens from the "Secure RAG chat" boards (design/artboards). Light by default, dark by system setting. */
+
+:root {
+  --bg: #F5F6F8;
+  --surface: #FFFFFF;
+  --surface-2: #EEF0F3;
+  --ink: #14181F;
+  --ink-inverse: #FFFFFF;
+  --muted: #4A5361;
+  --line: #D8DDE4;
+  --accent: #0B5E62;
+  --accent-hover: #073F42;
+  --accent-soft: #E2F0F0;
+  --ok: #0A6B2D;
+  --ok-soft: #E3F1E7;
+  --wait: #1F4FA3;
+  --wait-soft: #E5ECF8;
+  --warn: #7A4F00;
+  --warn-soft: #FAEFD8;
+  --bad: #A3141B;
+  --bad-soft: #FAE6E7;
+  --focus: #1F4FA3;
+
+  --font: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --size-base: 17px;
+  --size-small: 15px;
+  --size-tiny: 13px;
+  --size-title: 20px;
+  --size-figure: 22px;
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 12px;
+  --gap-s: 8px;
+  --gap-m: 12px;
+  --gap-l: 20px;
+  --tap: 44px;
+  --tap-big: 48px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F1318;
+    --surface: #171C23;
+    --surface-2: #222933;
+    --ink: #E8ECF1;
+    --ink-inverse: #0F1318;
+    --muted: #A9B3C1;
+    --line: #2E3642;
+    --accent: #5CC2C6;
+    --accent-hover: #8AD8DB;
+    --accent-soft: #123536;
+    --ok: #6CCB8A;
+    --ok-soft: #12301C;
+    --wait: #8FB0F0;
+    --wait-soft: #182A4A;
+    --warn: #E8B85C;
+    --warn-soft: #3A2C10;
+    --bad: #F08A8F;
+    --bad-soft: #3F1618;
+    --focus: #8FB0F0;
+    color-scheme: dark;
+  }
+}
+
+/* Projector mode: everything one step larger. */
+:root.large {
+  --size-base: 21px;
+  --size-small: 18px;
+  --size-tiny: 15px;
+  --size-title: 24px;
+  --size-figure: 27px;
+}

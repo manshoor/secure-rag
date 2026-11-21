@@ -189,7 +189,7 @@ function render(run) {
 
   fillRows($("steps"), run.steps.map((s) => [[s.name], [s.status, `step-${s.status}`], [detailText(s.detail)]]));
   fillRows($("lines"), run.lines.map((l) => [
-    [l.item_no || ""], [l.code], [l.vendor], [l.quantity, "num"], [l.unit], [l.unit_price, "num"], [l.total, "num"],
+    [l.item_no || ""], [l.code], [l.vendor], [l.quantity, "num"], [l.unit], [l.unit_price ?? "-", "num"], [l.total ?? "-", "num"],
   ]));
   const sections = Object.entries((run.boq_stats || {}).sections || {});
   fillRows($("sections"), sections.map(([name, amount]) => [[name || "(no section)"], [amount, "num"]]));

@@ -24,10 +24,12 @@ def header_auth(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def tracing_off():
-    """No test sends traces, even if LANGFUSE_* keys are set in the shell."""
+    """No test sends traces, even if LANGFUSE_* or LANGSMITH_KEY are set in the shell."""
     tracing.configure(None)
+    tracing.configure_langsmith(None)
     yield
     tracing.configure(None)
+    tracing.configure_langsmith(None)
 
 
 @pytest.fixture(scope="session")

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Refusals and errors</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F5F6F8;--surface:#FFFFFF;--ink:#14181F;--muted:#4A5361;--line:#D8DDE4;--accent:#0B5E62;--accent-soft:#E2F0F0;--ok:#0A6B2D;--ok-soft:#E3F1E7;--wait:#1F4FA3;--wait-soft:#E5ECF8;--warn:#7A4F00;--warn-soft:#FAEFD8;--bad:#A3141B;--bad-soft:#FAE6E7}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:17px;line-height:1.45}
+a{color:#0B5E62}a:hover{color:#073F42}
+</style>
+</helmet>
+<div style="min-height: 1040px; display: flex; flex-direction: column; gap: 24px; padding: 32px; box-sizing: border-box; background: var(--bg)">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <span style="font-size: 26px; font-weight: 700">Refusals and errors</span>
+    <span style="color: var(--muted)">Each state says what happened and what to do next. Every status has an icon and words, never colour alone.</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px">
+
+    <section aria-label="Case not visible" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">LINA · HR · BETA OPENS A CASE LINK</span>
+      <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: flex; gap: 14px">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4A5361" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 018 0v4"></path></svg>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-weight: 600; font-size: 18px">Not found or not visible to you</span>
+          <span style="color: var(--muted); font-size: 15px">The same reply whether the case exists or not, so it leaks nothing.</span>
+          <a href="#" style="font-size: 15px; margin-top: 4px">Back to my cases</a>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Not eligible to approve" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">KHALID VIEWS HIS OWN APPROVAL</span>
+      <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px">
+        <span style="font-weight: 600; font-size: 18px">Finance approval · AED 33,015.00</span>
+        <div style="display: flex; flex-wrap: wrap; gap: 12px">
+          <button disabled aria-describedby="why-not" style="font: inherit; font-weight: 600; min-height: 48px; padding: 0 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--muted); cursor: not-allowed">Approve</button>
+        </div>
+        <span id="why-not" style="display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 15px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg>You started this case. The requester cannot approve it. Waiting on finance.</span>
+      </div>
+    </section>
+
+    <section aria-label="Typed approval" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">OMAR TYPES INSTEAD OF CLICKING</span>
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="align-self: flex-end; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: #FFFFFF">approve it</div>
+        <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+          <span>Typed text never approves. Use the button on the card.</span>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px; border: 2px solid var(--wait); border-radius: 10px">
+            <span style="flex: 1 1 200px; font-weight: 600">Send 6 requests for quotation</span>
+            <button style="font: inherit; font-weight: 600; min-height: 44px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: #FFFFFF; cursor: pointer">Approve sending</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Case moved on" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">TWO TABS, ONE DECISION</span>
+      <div role="alert" style="background: var(--wait-soft); border: 1px solid var(--wait); border-radius: 12px; padding: 16px 20px; display: flex; gap: 12px; color: var(--ink)">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1F4FA3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.5 15a9 9 0 11-2.1-9.4L23 10"></path></svg>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="font-weight: 600">This case moved on</span>
+          <span style="font-size: 15px; color: var(--muted)">Someone decided this step already. Nothing was changed by your click.</span>
+          <button style="align-self: flex-start; font: inherit; font-weight: 600; min-height: 44px; padding: 0 16px; border: 1px solid var(--wait); border-radius: 8px; background: var(--surface); color: var(--wait); cursor: pointer">Show the latest</button>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Upload refused" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">UPLOAD REFUSED</span>
+      <div role="alert" style="background: var(--bad-soft); border: 1px solid var(--bad); border-radius: 12px; padding: 16px 20px; display: flex; gap: 12px">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#A3141B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><circle cx="12" cy="12" r="9"></circle><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="font-weight: 600; color: var(--bad)">site-photos.zip was not read</span>
+          <span style="font-size: 15px">Send a BOQ as CSV, XLSX or PDF, up to 10 MB.</span>
+          <button style="align-self: flex-start; font: inherit; font-weight: 600; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer">Choose another file</button>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Server problems" style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">SERVER BUSY · SERVER UNREACHABLE</span>
+      <div role="status" style="background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 12px; padding: 14px 20px; display: flex; gap: 12px; align-items: center">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7A4F00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>
+        <span style="flex: 1; font-size: 15px"><b>Busy reading other files.</b> Your message was kept. Try again in a few seconds.</span>
+        <button style="font: inherit; font-weight: 600; min-height: 44px; padding: 0 16px; border: 1px solid var(--warn); border-radius: 8px; background: var(--surface); color: var(--warn); cursor: pointer">Retry</button>
+      </div>
+      <div role="status" style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 20px; display: flex; gap: 12px; align-items: center">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4A5361" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><line x1="2" y1="2" x2="22" y2="22"></line><path d="M8.5 16.5a5 5 0 017 0"></path><path d="M5 12.9a10 10 0 015.2-2.8"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+        <span style="flex: 1; font-size: 15px"><b>Can’t reach the server.</b> Checking again every few seconds. Nothing was lost.</span>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

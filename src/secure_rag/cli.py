@@ -8,6 +8,10 @@
     uv run rag eval
     uv run rag db setup | reset          (Postgres: create tables, seed users and access)
     uv run rag role revoke sara hr       (Postgres: takes effect on the next question)
+    uv run rag workflow boq --user khalid --mode agent data/samples/boq_with_issues.csv
+    uv run rag workflow deliver <run id> --user omar data/samples/quotes/round1/*.csv | --deadline
+    uv run rag workflow approve <run id> --approver omar [--reject | --extend | --drop]
+    RAG_DEMO=on uv run rag demo reset [--yes]
 """
 
 import argparse
@@ -15,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import db, tracing
+from . import db, demo, tracing
 from .agent import AgentRunner, Decision, Outcome, Status
 from .answer import ask
 from .app import build_system, build_workflows
@@ -24,6 +28,7 @@ from .config import DOCS_DIR, GOLDEN_FILE
 from .evaluate import format_report, run_eval, save_run
 from .identity import RoleChange, get_user, list_users, seed_directory, set_role
 from .ingest import load_folder
+from .workflow import Event, RunMode
 
 _EXIT_OK = 0
 _EXIT_FAIL = 1
@@ -63,10 +68,19 @@ def main(argv: list[str] | None = None) -> int:
     flow_boq = flows.add_parser("boq", help="start from a BOQ file (xlsx, csv, pdf)")
     flow_boq.add_argument("--user", required=True)
     flow_boq.add_argument("file", type=Path)
-    flow_approve = flows.add_parser("approve", help="approve or reject the waiting gate")
+    flow_boq.add_argument("--mode", choices=[mode.value for mode in RunMode], default=RunMode.CLASSIC.value, help="agent: quote requests and checks")
+    flow_approve = flows.add_parser("approve", help="decide the waiting gate (approve by default)")
     flow_approve.add_argument("run_id")
     flow_approve.add_argument("--approver", required=True)
-    flow_approve.add_argument("--reject", action="store_const", const=Decision.REJECT, default=Decision.APPROVE, dest="decision")
+    choice = flow_approve.add_mutually_exclusive_group()
+    choice.add_argument("--reject", action="store_const", const=Decision.REJECT, default=Decision.APPROVE, dest="decision")
+    choice.add_argument("--extend", action="store_const", const=Decision.EXTEND, dest="decision", help="quote gate: ask once more")
+    choice.add_argument("--drop", action="store_const", const=Decision.DROP, dest="decision", help="quote gate: take the short lines out")
+    flow_deliver = flows.add_parser("deliver", help="feed vendor replies (file name = sender vendor id) or a passed deadline")
+    flow_deliver.add_argument("run_id")
+    flow_deliver.add_argument("--user", required=True, help="who delivers: someone who may act for procurement")
+    flow_deliver.add_argument("quotes", nargs="*", type=Path)
+    flow_deliver.add_argument("--deadline", action="store_true", help="the reply deadline passed")
     flow_resume = flows.add_parser("resume", help="finish a run that stopped between steps (crash, failed write)")
     flow_resume.add_argument("run_id")
     flow_resume.add_argument("--user", help="run as this user (default: the requester)")
@@ -87,7 +101,14 @@ def main(argv: list[str] | None = None) -> int:
     role_cmd.add_argument("user")
     role_cmd.add_argument("role")
 
+    demo_cmd = commands.add_parser("demo", help="demo helpers (RAG_DEMO=on)")
+    demo_actions = demo_cmd.add_subparsers(dest="action", required=True)
+    demo_reset = demo_actions.add_parser("reset", help="delete demo runs, holds, outbox and checkpoints (lists first)")
+    demo_reset.add_argument("--yes", action="store_true", help="delete; without it, only list")
+
     args = parser.parse_args(argv)
+    if args.command == "workflow" and args.flow == "deliver" and bool(args.quotes) == args.deadline:
+        parser.error("workflow deliver needs quote files or --deadline, not both")
 
     # The process is short-lived: send buffered traces before it exits.
     try:
@@ -187,7 +208,16 @@ def _workflow(args: argparse.Namespace) -> int:
         if args.flow == "start":
             view = runner.start_request(get_user(args.user), args.request)
         elif args.flow == "boq":
-            view = runner.start_boq(get_user(args.user), args.file)
+            view = runner.start_boq(get_user(args.user), args.file, mode=RunMode(args.mode))
+        elif args.flow == "deliver":
+            # A mistyped path would count as an unreadable reply and use up the round.
+            missing = [str(path) for path in args.quotes if not path.is_file()]
+            if missing:
+                print(f"error: no such file: {', '.join(missing)}")
+                return _EXIT_FAIL
+            event = Event.DEADLINE_PASSED if args.deadline else Event.QUOTES_DELIVERED
+            quotes = [(path.stem, path) for path in args.quotes] or None
+            view = runner.deliver(args.run_id, event, get_user(args.user), quotes)
         elif args.flow == "approve":
             view = runner.decide(args.run_id, get_user(args.approver), args.decision)
         elif args.flow == "resume":
@@ -200,6 +230,27 @@ def _workflow(args: argparse.Namespace) -> int:
         return _EXIT_FAIL
     _print_run(view)
     return _EXIT_FAIL if view.status in (WfStatus.STOPPED, WfStatus.REJECTED) else _EXIT_OK
+
+
+def _demo(args: argparse.Namespace) -> int:
+    """List the demo state, and delete it with --yes."""
+    try:
+        targets = demo.reset() if args.yes else demo.reset_targets()
+    except demo.ResetRefused as refused:
+        print(f"error: {refused}")
+        return _EXIT_FAIL
+    except OSError as error:
+        print(f"error: reset stopped part way: {error}")
+        return _EXIT_FAIL
+    if not targets:
+        print("nothing to reset")
+        return _EXIT_OK
+    verb = "deleted" if args.yes else "would delete"
+    for path in targets:
+        print(f"  {verb} {path}")
+    if not args.yes:
+        print("run again with --yes to delete (stop the server first)")
+    return _EXIT_OK
 
 
 def _print_run(view) -> None:
@@ -215,7 +266,7 @@ def _print_run(view) -> None:
     else:
         for line in view.lines:
             label = line.get("item_no", line["code"])
-            print(f"    {label:<6} {line['code']:<14} {line['quantity']:>8} {line['unit']:<4} x {line['unit_price']:>9} = {line['total']:>11}  {line['vendor']}")
+            print(f"    {label:<6} {line['code']:<14} {line['quantity']:>8} {line['unit']:<4} x {line.get('unit_price', '-'):>9} = {line.get('total', '-'):>11}  {line['vendor']}")
         for item in view.rfq:
             print(f"    RFQ    {item['item_no']:<6} {item['description'][:50]:<50}  {item['reason']}")
         for item in view.review:
@@ -261,7 +312,7 @@ def _workflow_eval(_: argparse.Namespace) -> int:
 
 
 _HANDLERS = {"users": _users, "ingest": _ingest, "ask": _ask, "agent": _agent, "approve": _approve, "eval": _eval, "db": _db, "role": _role,
-             "workflow": _workflow, "boq-check": _boq_check, "workflow-eval": _workflow_eval}
+             "workflow": _workflow, "boq-check": _boq_check, "workflow-eval": _workflow_eval, "demo": _demo}
 
 if __name__ == "__main__":
     sys.exit(main())

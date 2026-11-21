@@ -23,7 +23,7 @@ Everything runs offline by default (no API key, no cost). Set `RAG_LLM=claude` t
 | Cross-department workflow with two approval gates | `workflow.py` (LangGraph), `systems.py`, `policy.py`; see [Workflow](#workflow-hr--procurement--finance) |
 | BOQ parsing, unit normalising, catalogue matching, pricing | `boq_parser.py` (tabular, Docling, LlamaParse), `boq.py` |
 | Browser page for the workflow | `GET /ui` (`static/workflow.html`, no build step, no CDN) |
-| Observability | `tracing.py` (Langfuse): one trace per question or agent step, with retrieval, model call (tokens, cost) and output check |
+| Observability | `tracing.py` (Langfuse, LangSmith): one trace per question or agent step, with retrieval, model call (tokens, cost) and output check |
 
 ## Architecture
 
@@ -73,7 +73,8 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 244 offline tests, about 20 seconds; 15 Postgres/Qdrant tests skip
+uv run pytest -q                 # 414 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
+uv run playwright install chromium   # once, about 100 MB: the 4 browser tests (-m ui) skip without it
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
 uv run rag ask --user sara "How many leave days can I carry over?"
@@ -145,7 +146,21 @@ uv run rag workflow approve <run id> --approver noura           # AED 215,925.00
 uv run rag workflow-eval                                         # 11 workflow cases, offline
 ```
 
-Browser: `RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010`, then open http://127.0.0.1:8010/ui. Pick a user, start a request or load a sample BOQ, and approve or reject as the selected user. `WALKTHROUGH.md` has a five-minute walkthrough.
+Agent mode adds quote requests under the three-quote rule. The procurement agent picks approved vendors and drafts one request each; procurement approves sending; replies are checked by code (arithmetic, units, sender, validity); too few valid quotes go back to procurement to extend once or drop the lines; the lowest valid quote per package joins the total; then the same two gates, and one purchase order per vendor.
+
+```sh
+uv run rag workflow boq --user khalid --mode agent data/samples/boq_with_issues.csv
+uv run rag workflow approve <run id> --approver omar                        # send 6 quote requests
+uv run rag workflow deliver <run id> --user omar data/samples/quotes/round1/*.csv   # file name = sender vendor id
+uv run rag workflow approve <run id> --approver omar --extend               # or --drop
+uv run rag workflow deliver <run id> --user omar data/samples/quotes/round2/*.csv   # or --deadline
+uv run rag workflow approve <run id> --approver omar
+uv run rag workflow approve <run id> --approver faisal                      # 4 purchase orders, AED 33,015.00
+```
+
+Chat page: `RAG_AUTH=header RAG_DEMO=on uv run uvicorn secure_rag.api:app --port 8010`, then open http://127.0.0.1:8010/app (add `?as=omar` to start as someone else; two windows side by side work). People ask questions, attach a BOQ, and decide on cards; typed text never decides. With `RAG_DEMO=on` a dashed "Demo control" box stands in for vendor email and the deadline scheduler. `RAG_DEMO=on uv run rag demo reset --yes` clears runs, holds, outbox and checkpoints between rehearsals (stop the server first; the audit log stays). The page is plain JavaScript modules with a strict Content Security Policy; it writes server data as text only. The design boards it follows are in `design/artboards`.
+
+Browser (classic page): `RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010`, then open http://127.0.0.1:8010/ui. Pick a user, start a request or load a sample BOQ, and approve or reject as the selected user. `WALKTHROUGH.md` has a five-minute walkthrough.
 
 ### BOQ parsers
 
@@ -227,10 +242,15 @@ RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010      # docs at htt
 | POST | `/agent/runs` | `{"request": "..."}` |
 | POST | `/agent/runs/{run_id}/decision` | `{"decision": "approve"}` or `"reject"` |
 | POST | `/workflows` | `{"request": "..."}` (needs the hr role) |
-| POST | `/workflows/boq` | multipart `file`: xlsx, csv or pdf, at most 2 MB, content must match the extension (needs the site_engineer role) |
-| POST | `/workflows/{run_id}/decision` | `{"decision": "approve"}` or `"reject"` |
+| POST | `/workflows/boq` | multipart `file`: xlsx, csv or pdf, at most 2 MB, content must match the extension (needs the site_engineer role); optional `mode`: `classic` (default) or `agent` |
+| GET | `/workflows?scope=mine` or `waiting` | the caller's cases, or gates the caller may decide now (newest 50) |
+| POST | `/workflows/{run_id}/decision` | `{"decision": "approve", "gate": "rfq"}`; `"reject"`; `"extend"` or `"drop"` at the quote gate |
+| POST | `/workflows/{run_id}/resume` | finish a run that stopped between steps |
+| POST | `/workflows/{run_id}/events` | `RAG_DEMO=on` only: `{"event": "quotes_delivered", "sample": "round1"}` or `{"event": "deadline_passed"}` |
 | GET | `/workflows/{run_id}` | the run as the caller may see it; 404 for anyone but the requester and eligible approvers |
-| GET | `/ui` | the workflow page |
+| POST | `/chat` | `{"message": "...", "run_id": "..."}`: intent, text and cards; never decides |
+| GET | `/ui` | the classic workflow page |
+| GET | `/app` | the chat page |
 
 Uploaded BOQs are saved under a random name, parsed, and deleted before the response.
 
@@ -241,9 +261,11 @@ curl -s localhost:8010/ask -H 'X-User: sara' -H 'Content-Type: application/json'
   -d '{"question": "How many leave days can I carry over?"}'
 ```
 
-## Tracing (Langfuse)
+## Tracing (Langfuse, LangSmith)
 
-Off unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (plus `LANGFUSE_BASE_URL` for a self-hosted Langfuse). Each answer returns its `trace_id`.
+Langfuse is off unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (plus `LANGFUSE_BASE_URL` for a self-hosted Langfuse). Each answer returns its Langfuse `trace_id`.
+
+LangSmith is off unless `LANGSMITH_KEY` is set (plus `LANGSMITH_ENDPOINT` for another region or a self-hosted server). Runs go to the `secure-rag` project. Both can be on at once; each gets the same observations with the same fields.
 
 ```
 ask            user id, tags, refused, reason, cited doc ids, cost
@@ -255,7 +277,9 @@ agent_start / agent_resume   run id, status, reason; nested plan and ask spans
 
 Only this app's spans are exported. The Anthropic SDK also emits a span per call; exporting it would count each call's cost twice and add Anthropic account ids.
 
-Traces hold ids, scores and costs, not question, document or answer text: people who read traces may not have the asking user's document permissions. `RAG_TRACE_CONTENT=full` adds text, for a private test instance only.
+Traces hold ids, scores and costs, not question, document or answer text: people who read traces may not have the asking user's document permissions. `RAG_TRACE_CONTENT=full` adds text, for a private test instance only. Stop reasons count as text: they can quote the request. Runs on `data/private/` BOQs never send text, even with `full`.
+
+LangChain's own LangSmith tracing stays off, even with `LANGSMITH_TRACING=true`: it would send whole graph state, BOQ lines and prices included. The key is read from `LANGSMITH_KEY`, not `LANGSMITH_API_KEY`, so LangChain never finds it. An error shows its type only, never its message or stack trace.
 
 ## Settings
 
@@ -268,7 +292,8 @@ Traces hold ids, scores and costs, not question, document or answer text: people
 | `RAG_DATA_DIR` | `data/runtime` | audit log, agent checkpoints, outbox (when Postgres is off) |
 | `DATABASE_URL` | unset | Postgres for users, access, audit, checkpoints, eval runs |
 | `QDRANT_URL` | unset (in-memory) | Qdrant server for persistent vectors |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | unset | turn tracing on |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | unset | turn Langfuse tracing on |
+| `LANGSMITH_KEY`, `LANGSMITH_ENDPOINT` | unset | turn LangSmith tracing on |
 | `RAG_AUTH` | `off` | `header` trusts the `X-User` header (local use only) |
 | `RAG_TRACE_CONTENT` | `ids` | `full` puts question, prompt and answer text in traces, and `rag eval` prints each refused draft and the number or sentence that failed (never for `data/private/` BOQs) |
 | `RAG_BOQ_PARSER` | `tabular` | `docling` or `llamaparse` |
@@ -304,7 +329,7 @@ All companies, people, documents, vendors, prices and BOQs are invented.
 - A user who works for two companies and names neither gets "Name the company in your question" whenever the sources come from both and the answer does not say whose rule each is. The offline composer never names companies, so offline this always asks; Claude is told to name them.
 - Hash embeddings are lexical; use Ollama, Azure OpenAI or another embedding model for real semantic search.
 - The injection screen is pattern-based. It is one layer; the permission filter and the tool allow-list are what actually hold.
-- Observability: unit tests use an in-memory exporter. Checked live on 17 Nov 2026 against a local Langfuse 4.72 server: traces, user ids, chunk ids, model, tokens and cost arrive; no question, prompt or document text. The audit log stays local JSONL.
+- Observability: unit tests use an in-memory exporter for Langfuse and a fake client for LangSmith. Checked live on 17 Nov 2026 against a local Langfuse 4.72 server: traces, user ids, chunk ids, model, tokens and cost arrive; no question, prompt or document text. The audit log stays local JSONL.
 - API identity is a header naming a sample user, off unless `RAG_AUTH=header`. No rate limiting.
 - Decisions on an agent run: only the requester and eligible approvers see the run; anyone else gets 404. Decisions on one run are serialised (in-process lock plus a Postgres advisory lock), and the outbox records each run once.
 - Amounts must be finite numbers; an unreadable amount needs an executive.
@@ -318,5 +343,6 @@ All companies, people, documents, vendors, prices and BOQs are invented.
 - Rate and amount columns in a BOQ are ignored; prices come only from the catalogue.
 - The `/ui` page uses the `X-User` header like the rest of the API: local use only. A file uploaded through it runs as a normal (not counts-only) run, even if it came from `data/private/`; use the CLI for private files.
 - Run checkpoints keep the priced, RFQ and review lines with their descriptions (counts-only runs included), on the local disk or in Postgres. Raw parsed lines are dropped after pricing.
+- Quote prices on agent runs: only procurement, finance and executives of the run's company see quoted line prices and the comparison. The requester still sees the run total and each PO's total once quotes are priced, so they can work out each winning quote's price (run total minus the catalogue lines). Losing bids are never shown to them.
 - A policy citation is cached per run and viewer for the life of the process; a role revoked meanwhile still sees the cached text until restart.
-- If a step fails between gates (crash, failed write), the run waits until someone runs `rag workflow resume <run id>`; nothing retries on its own and the API has no resume route.
+- If a step fails between gates (crash, failed write), the run waits until someone runs `rag workflow resume <run id>`; nothing retries on its own. The API route is `POST /workflows/{run_id}/resume`.

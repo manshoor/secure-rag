@@ -240,6 +240,14 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
 
     total = sum((Decimal(line["total"]) for line in lines), Decimal("0.00"))
     stats = {"lines": len(state["boq_raw"]), "priced": len(lines), "rfq": len(rfq), "review": len(review), "sections": {name: str(value) for name, value in sections.items()}}
+
+    # Agent mode with lines to quote: no hold yet; the quote loop runs first.
+    from . import procurement_agent
+
+    if procurement_agent.wants_quotes(state, rfq, total):
+        update = procurement_agent.start_stage(state, lines, total, rfq)
+        return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}
+
     update = runner._price_and_precheck(state, "boq_price", lines, total, [], {"priced": len(lines), "rfq": len(rfq), "review": len(review)})
     # The raw lines are not needed after pricing; drop them from the checkpoint.
     return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}

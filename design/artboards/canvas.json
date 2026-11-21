@@ -1,0 +1,20 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-19T12:00:00Z"},
+  "title": "Secure RAG chat",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1040, "title": "1 · Khalid starts a case: live agent timeline", "expand": "fill"},
+    "Ask.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1040, "title": "2 · Sara asks: cited answer and refusal", "expand": "fill"},
+    "RfqApproval.dc.html": {"x": 3040, "y": 0, "w": 1440, "h": 1040, "title": "3 · Omar: waiting on you, approve quote requests", "expand": "fill"},
+    "Quotes.dc.html": {"x": 0, "y": 1160, "w": 1440, "h": 1100, "title": "4 · Replies checked, too few valid: exception", "expand": "fill"},
+    "Approve.dc.html": {"x": 1520, "y": 1160, "w": 1440, "h": 1100, "title": "5 · Faisal: comparison and finance approval", "expand": "fill"},
+    "Done.dc.html": {"x": 3040, "y": 1160, "w": 1440, "h": 1100, "title": "6 · Done: one purchase order per vendor", "expand": "fill"},
+    "States.dc.html": {"x": 0, "y": 2380, "w": 1440, "h": 1040, "title": "7 · Not visible, not eligible, errors", "expand": "fill"},
+    "SideBySide.dc.html": {"x": 1520, "y": 2380, "w": 1440, "h": 900, "title": "8 · Two windows at 720 px: Khalid and Omar"}
+  },
+  "order": ["Main.dc.html", "Ask.dc.html", "RfqApproval.dc.html", "Quotes.dc.html", "Approve.dc.html", "Done.dc.html", "States.dc.html", "SideBySide.dc.html"],
+  "notes": {},
+  "designSystems": []
+}

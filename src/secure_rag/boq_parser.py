@@ -11,6 +11,9 @@ the header row, reads item / description / unit / quantity, and treats rows
 without a quantity as section headings. Rate and amount columns are ignored:
 prices come only from the catalogue.
 
+parse_quote reads a vendor quote (xlsx or csv) the same way: a block of
+"Vendor, ..." rows, then a table with unit price and amount columns.
+
 Files under data/private/ are never sent to a cloud parser unless
 RAG_ALLOW_CLOUD_PARSE=yes is set for that run.
 """
@@ -24,6 +27,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
@@ -64,6 +68,20 @@ _HEADERS = {
 }
 _TABULAR_SUFFIXES = {".xlsx", ".csv"}
 
+# A quote adds price columns to the BOQ headers, and a block of fields above the table.
+_QUOTE_HEADERS = {
+    **_HEADERS,
+    "unit_price": {"unit price", "rate", "unit rate", "price"},
+    "amount": {"amount", "total", "line total"},
+}
+_QUOTE_FIELDS = {
+    "vendor": "vendor_name", "vendor name": "vendor_name", "vendor id": "vendor_id",
+    "quote ref": "ref", "quotation ref": "ref", "date": "issued", "valid until": "valid_until", "currency": "currency",
+}
+_QUOTE_COLUMNS = ("item_no", "description", "unit", "quantity", "unit_price", "amount")
+_MAX_FIELD = 200
+_ISO_DATE_CHARS = 10  # "2026-11-18"; xlsx dates arrive as "2026-11-18 00:00:00"
+
 
 class ParserKind(str, Enum):
     TABULAR = "tabular"
@@ -89,6 +107,29 @@ class BoqLine(BaseModel):
     unit: str = Field(max_length=20)
     quantity: Decimal | None = Field(gt=0)
     section: str = Field(default="", max_length=_MAX_DESCRIPTION)
+
+
+class QuoteLine(BaseModel):
+    """One quoted line as written. Numbers are None when the cell is not a plain number."""
+
+    item_no: str = Field(max_length=40)
+    description: str = Field(max_length=_MAX_DESCRIPTION)
+    unit: str = Field(max_length=20)
+    quantity: Decimal | None
+    unit_price: Decimal | None
+    amount: Decimal | None
+
+
+class Quote(BaseModel):
+    """A vendor's reply to a request for quotation. quotes.py checks it against the request."""
+
+    vendor_name: str = Field(max_length=_MAX_FIELD)
+    vendor_id: str = Field(min_length=1, max_length=40)
+    ref: str = Field(max_length=_MAX_FIELD)
+    issued: date | None
+    valid_until: date | None
+    currency: str = Field(max_length=_MAX_FIELD)
+    lines: list[QuoteLine]
 
 
 class BoqParseError(ValueError):
@@ -128,6 +169,24 @@ def parse_boq(path: Path, kind: ParserKind | None = None) -> list[BoqLine]:
     except Exception as error:  # broken zip, bad CSV, unreadable PDF: a clear stop, never a crash
         raise BoqParseError(f"the file could not be read as a BOQ ({type(error).__name__})") from error
     return _rows_to_lines(rows)
+
+
+def parse_quote(path: Path) -> Quote:
+    """Read a vendor quote (xlsx or csv). Errors name the problem, never text from the file."""
+    try:
+        rows = _tabular_rows(path)
+    except BoqParseError:
+        raise
+    except Exception as error:  # broken zip, bad CSV: a clear stop, never a crash
+        raise BoqParseError(f"the file could not be read as a quote ({type(error).__name__})") from error
+
+    # A field past its length limit (or any other model check) is a refused file, not a crash.
+    try:
+        return _rows_to_quote(rows)
+    except BoqParseError:
+        raise
+    except ValidationError as error:
+        raise BoqParseError("the quote has a field that is too long or not valid") from error
 
 
 # ---- backends: file -> rows of text cells ------------------------------------------
@@ -311,6 +370,71 @@ def _rows_to_lines(rows: list[list[str]]) -> list[BoqLine]:
     if columns is None:
         raise BoqParseError("no header row with description, unit and quantity columns")
     return lines
+
+
+def _rows_to_quote(rows: list[list[str]]) -> Quote:
+    """Fields above the table, then the table. The table needs every quote column."""
+    fields: dict[str, str] = {}
+    columns: dict[str, int] | None = None
+    lines: list[QuoteLine] = []
+    saw_boq_header = False
+    for row in rows:
+        if columns is None:
+            # Above the table: "Vendor ID, V-GLB-1" style rows, or the header row itself.
+            found = _quote_columns(row)
+            if found:
+                columns = found
+                continue
+            saw_boq_header = saw_boq_header or _header_columns(row) is not None
+            key = _QUOTE_FIELDS.get(_header_name(_at(row, 0)))
+            if key and key not in fields:
+                fields[key] = _at(row, 1)[:_MAX_FIELD]
+            continue
+
+        item_no, description, unit, quantity, unit_price, amount = (_at(row, columns[key]) for key in _QUOTE_COLUMNS)
+        if not item_no and not description:
+            continue
+        lines.append(QuoteLine(
+            item_no=item_no[:40], description=description[:_MAX_DESCRIPTION], unit=unit[:20],
+            quantity=_decimal(quantity), unit_price=_decimal(unit_price), amount=_decimal(amount),
+        ))
+        if len(lines) >= _MAX_LINES:
+            break
+
+    # Which part is missing, in words; never the file's text.
+    if columns is None:
+        missing = "a unit price or amount column" if saw_boq_header else "a header row with item, description, unit, qty, unit price and amount"
+        raise BoqParseError(f"the quote has no {missing}")
+    if not fields.get("vendor_id"):
+        raise BoqParseError("the quote names no vendor id")
+    return Quote(
+        vendor_name=fields.get("vendor_name", ""), vendor_id=fields["vendor_id"][:40], ref=fields.get("ref", ""),
+        issued=_iso_date(fields.get("issued", "")), valid_until=_iso_date(fields.get("valid_until", "")),
+        currency=fields.get("currency", "").upper(), lines=lines,
+    )
+
+
+def _quote_columns(row: list[str]) -> dict[str, int] | None:
+    found: dict[str, int] = {}
+    for index, cell in enumerate(row):
+        name = _header_name(cell)
+        for key, names in _QUOTE_HEADERS.items():
+            if name in names and key not in found:
+                found[key] = index
+    return found if set(_QUOTE_COLUMNS) <= set(found) else None
+
+
+def _header_name(cell: str) -> str:
+    """'Unit price (excl. VAT)' -> 'unit price': lower case, no brackets, letters and spaces only."""
+    plain = re.sub(r"\(.*?\)", "", cell.lower())
+    return " ".join(re.sub(r"[^a-z ]", "", plain).split())
+
+
+def _iso_date(text: str) -> date | None:
+    try:
+        return date.fromisoformat(text.strip()[:_ISO_DATE_CHARS])
+    except ValueError:
+        return None
 
 
 def _header_columns(row: list[str]) -> dict[str, int] | None:

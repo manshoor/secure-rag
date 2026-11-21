@@ -53,6 +53,12 @@ class Decision(str, Enum):
 
     APPROVE = "approve"
     REJECT = "reject"
+    EXTEND = "extend"  # workflow quote gate only: ask again once
+    DROP = "drop"  # workflow quote gate only: take the lines out
+
+
+# The answers an approval gate takes (every gate here and in workflow.py except the quote gate).
+APPROVAL_CHOICES = frozenset({Decision.APPROVE, Decision.REJECT})
 
 
 class Status(str, Enum):
@@ -305,6 +311,8 @@ class AgentRunner:
         stopped on an error after its tool ran must not be pushed through execute again.
         """
         # Check and resume under one lock, so two approvals cannot both pass the check.
+        if decision not in APPROVAL_CHOICES:
+            raise ValueError(f"'{decision.value}' is not an answer to an approval")
         with self._lock_for(thread_id), db.run_lock(thread_id):
             snapshot = self._graph.get_state(_thread(thread_id))
             if not any(task.interrupts for task in snapshot.tasks):
@@ -447,7 +455,7 @@ class AgentRunner:
 
 def _traced(span: Any, outcome: Outcome) -> Outcome:
     """Record where the run ended up on its trace."""
-    span.update(output=tracing.content(outcome.result), metadata={"status": outcome.status.value, "reason": outcome.reason})
+    span.update(output=tracing.content(outcome.result), metadata={"status": outcome.status.value, "reason": tracing.content(outcome.reason)})
     return outcome
 
 

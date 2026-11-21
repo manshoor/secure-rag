@@ -5,3 +5,6 @@ data/runtime/
 .DS_Store
 .claude/
 data/private/
+
+# Local secrets (Langfuse, Anthropic keys)
+.env

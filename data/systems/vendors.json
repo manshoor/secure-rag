@@ -1,0 +1,75 @@
+{
+  "_note": "Invented stand-in for the vendor master (ERP). Categories say which requests for quotation a vendor receives. Emails use the reserved .invalid domain; bank accounts are placeholders with check digits 00, never valid.",
+  "vendors": [
+    {
+      "id": "V-GLB-1",
+      "name": "Lumen Glassblock Trading LLC",
+      "company": "alpha-construction",
+      "categories": ["glass_block"],
+      "approved": true,
+      "email": "quotes@lumen-glassblock.invalid",
+      "bank_account": "AE000000000000000000101",
+      "licence_expiry": "2027-06-30"
+    },
+    {
+      "id": "V-GLB-2",
+      "name": "Prismwell Masonry Supplies LLC",
+      "company": "alpha-construction",
+      "categories": ["glass_block"],
+      "approved": true,
+      "email": "sales@prismwell-masonry.invalid",
+      "bank_account": "AE000000000000000000102",
+      "licence_expiry": "2027-03-31"
+    },
+    {
+      "id": "V-GLB-3",
+      "name": "Gulf Blocks Factory LLC",
+      "company": "alpha-construction",
+      "categories": ["glass_block"],
+      "approved": true,
+      "email": "tenders@gulf-blocks.invalid",
+      "bank_account": "AE000000000000000000103",
+      "licence_expiry": "2027-09-30"
+    },
+    {
+      "id": "V-GRC-1",
+      "name": "Saltmarsh GRC Works LLC",
+      "company": "alpha-construction",
+      "categories": ["grc"],
+      "approved": true,
+      "email": "estimating@saltmarsh-grc.invalid",
+      "bank_account": "AE000000000000000000201",
+      "licence_expiry": "2027-05-31"
+    },
+    {
+      "id": "V-GRC-2",
+      "name": "Cobalt Dune Facades LLC",
+      "company": "alpha-construction",
+      "categories": ["grc"],
+      "approved": true,
+      "email": "quotes@cobalt-dune.invalid",
+      "bank_account": "AE000000000000000000202",
+      "licence_expiry": "2027-08-31"
+    },
+    {
+      "id": "V-GRC-3",
+      "name": "Kestrelcast Precast LLC",
+      "company": "alpha-construction",
+      "categories": ["grc"],
+      "approved": true,
+      "email": "rfq@kestrelcast.invalid",
+      "bank_account": "AE000000000000000000203",
+      "licence_expiry": "2027-02-28"
+    },
+    {
+      "id": "V-GRC-9",
+      "name": "Shortcut Facades LLC",
+      "company": "alpha-construction",
+      "categories": ["grc"],
+      "approved": false,
+      "email": "hello@shortcut-facades.invalid",
+      "bank_account": "AE000000000000000000209",
+      "licence_expiry": "2026-01-31"
+    }
+  ]
+}

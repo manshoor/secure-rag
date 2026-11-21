@@ -114,3 +114,18 @@ def embedder_kind() -> EmbedderKind:
 def llm_kind() -> LlmKind:
     """Read the model choice from RAG_LLM (default: offline)."""
     return LlmKind(os.environ.get("RAG_LLM", LlmKind.OFFLINE.value))
+
+
+class DemoMode(str, Enum):
+    """Demo controls (simulated vendor replies, deadline) for rehearsals only."""
+
+    OFF = "off"
+    ON = "on"
+
+
+_DEMO_ENV = "RAG_DEMO"
+
+
+def demo_mode() -> DemoMode:
+    """Read RAG_DEMO at call time. Only "on" turns it on; anything else is off."""
+    return DemoMode.ON if os.environ.get(_DEMO_ENV, "") == DemoMode.ON.value else DemoMode.OFF

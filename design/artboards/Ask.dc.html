@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sara asks a policy question</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F5F6F8;--surface:#FFFFFF;--ink:#14181F;--muted:#4A5361;--line:#D8DDE4;--accent:#0B5E62;--accent-soft:#E2F0F0;--ok:#0A6B2D;--ok-soft:#E3F1E7;--wait:#1F4FA3;--wait-soft:#E5ECF8;--warn:#7A4F00;--warn-soft:#FAEFD8;--bad:#A3141B;--bad-soft:#FAE6E7}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:17px;line-height:1.45}
+a{color:#0B5E62}a:hover{color:#073F42}
+</style>
+</helmet>
+<div style="min-height: 1040px; display: flex; flex-direction: column; background: var(--bg)">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--line)">
+  <div style="display: flex; align-items: center; gap: 12px">
+    <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0B5E62" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>
+    <span style="font-size: 21px; font-weight: 700; letter-spacing: -0.01em">Secure RAG</span>
+    <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600">Offline · model cost $0.00</span>
+  </div>
+  <div style="display: flex; align-items: center; gap: 10px">
+    <span style="padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--muted); color: var(--muted); font-size: 13px; font-weight: 600">DEMO</span>
+    <label for="persona" style="color: var(--muted); font-size: 15px">Acting as</label>
+    <select id="persona" style="font: inherit; font-size: 16px; padding: 8px 12px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface)">
+      <option>Sara · HR · Alpha</option>
+    </select>
+  </div>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; flex: 1; align-items: stretch">
+
+  <nav aria-label="Cases" style="flex: 1 1 240px; max-width: 280px; padding: 20px 16px; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 20px">
+    <button style="font: inherit; font-weight: 600; min-height: 44px; border: 0; border-radius: 8px; background: var(--accent); color: #FFFFFF; cursor: pointer">New chat</button>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">WAITING ON YOU</span>
+      <span style="color: var(--muted); font-size: 15px">Nothing right now.</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">MY CASES</span>
+      <span style="color: var(--muted); font-size: 15px">No cases yet.</span>
+    </div>
+  </nav>
+
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+    <div style="flex: 1; padding: 24px 32px; display: flex; flex-direction: column; gap: 20px; max-width: 880px; width: 100%; margin: 0 auto; box-sizing: border-box">
+
+      <div style="align-self: flex-end; max-width: 70%; padding: 12px 16px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: #FFFFFF">How many leave days can I carry over?</div>
+
+      <section aria-label="Answer" style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px">
+        <p style="margin: 0; font-size: 18px">You can carry up to 10 unused days into the next year <a href="#" style="display: inline-block; padding: 0 7px; border-radius: 6px; background: var(--accent-soft); font-size: 14px; font-weight: 700; text-decoration: none">S1</a>. Carried days expire on 31 March <a href="#" style="display: inline-block; padding: 0 7px; border-radius: 6px; background: var(--accent-soft); font-size: 14px; font-weight: 700; text-decoration: none">S1</a>.</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 10px; border-top: 1px solid var(--line)">
+          <span style="font-size: 14px; color: var(--muted)">Source</span>
+          <a href="#" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; min-height: 32px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line); text-decoration: none; color: var(--ink); font-size: 15px"><b style="color: var(--accent)">S1</b> Annual Leave Policy › Carry over · Group</a>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--ok); font-size: 14px; font-weight: 600">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          Every sentence cited · every number found in its source
+        </div>
+      </section>
+
+      <div style="align-self: flex-end; max-width: 70%; padding: 12px 16px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: #FFFFFF">What does the board memo say about next year?</div>
+
+      <section aria-label="Answer" style="background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: flex; gap: 14px">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4A5361" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 018 0v4"></path></svg>
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <span style="font-weight: 600; font-size: 18px">I can’t answer that from documents you can read.</span>
+          <span style="color: var(--muted); font-size: 15px">Answers come only from documents your roles allow. No model saw anything else.</span>
+        </div>
+      </section>
+    </div>
+
+    <div style="padding: 0 32px; max-width: 880px; width: 100%; margin: 0 auto; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 8px">
+      <button style="font: inherit; font-size: 15px; padding: 8px 14px; min-height: 44px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); cursor: pointer">When must I submit a leave request?</button>
+      <button style="font: inherit; font-size: 15px; padding: 8px 14px; min-height: 44px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); cursor: pointer">Order laptops for new hires</button>
+      <button style="font: inherit; font-size: 15px; padding: 8px 14px; min-height: 44px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); cursor: pointer">What is waiting on me?</button>
+    </div>
+
+    <form style="display: flex; gap: 10px; align-items: center; padding: 12px 32px 24px; max-width: 880px; width: 100%; margin: 0 auto; box-sizing: border-box">
+      <label for="message" style="position: absolute; left: -9999px">Message</label>
+      <input id="message" type="text" placeholder="Ask a question about company documents" style="flex: 1; min-width: 0; font: inherit; padding: 12px 16px; min-height: 48px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: var(--surface)">
+      <button type="submit" style="flex: 0 0 auto; min-height: 48px; padding: 0 20px; font: inherit; font-weight: 600; border: 0; border-radius: 10px; background: var(--accent); color: #FFFFFF; cursor: pointer">Send</button>
+    </form>
+  </main>
+
+  <aside aria-label="Source" style="flex: 1 1 380px; max-width: 460px; background: var(--surface); border-left: 1px solid var(--line); padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
+    <span style="font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em">SOURCE S1</span>
+    <span style="font-size: 20px; font-weight: 700">Annual Leave Policy</span>
+    <span style="color: var(--muted); font-size: 15px">Section: Carry over · Company: Group · Readable by: employees</span>
+    <blockquote style="margin: 0; padding: 14px 16px; border-radius: 10px; background: var(--bg); font-size: 16px">Up to 10 unused days may be carried into the next year. Carried days expire on 31 March. Unused days above this limit are forfeited unless HR approves an exception in writing.</blockquote>
+    <div style="display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 15px">
+      <span style="font-weight: 600">Checks on this answer</span>
+      <span style="display: flex; gap: 8px; align-items: center; color: var(--ok)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>Only documents Sara may read</span>
+      <span style="display: flex; gap: 8px; align-items: center; color: var(--ok)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>Citations point to real sources</span>
+      <span style="display: flex; gap: 8px; align-items: center; color: var(--ok)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>10 and 31 found in the cited section</span>
+    </div>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

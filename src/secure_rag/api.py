@@ -4,10 +4,15 @@
     POST /agent/runs                   request  -> run (done, denied, or awaiting approval)
     POST /agent/runs/{run_id}/decision approve | reject, as the calling user
     POST /workflows                    HR request -> HR check -> procurement -> finance
-    POST /workflows/boq                BOQ upload (xlsx, csv, pdf) -> priced lines -> gates
-    POST /workflows/{run_id}/decision  approve | reject the waiting gate, as the calling user
+    POST /workflows/boq                BOQ upload (xlsx, csv, pdf), mode classic | agent -> priced lines -> gates
+    GET  /workflows?scope=mine|waiting the caller's cases, or gates the caller may decide now
+    POST /workflows/{run_id}/decision  approve | reject (extend | drop at the quote gate), as the calling user
+    POST /workflows/{run_id}/resume    finish a run that stopped between steps
+    POST /workflows/{run_id}/events    demo only (RAG_DEMO=on): sample vendor replies, deadline passed
     GET  /workflows/{run_id}           the run as the caller may see it
+    POST /chat                         a message -> intent, text and cards; never decides
     GET  /ui                           one static page that drives the workflow
+    GET  /app                          the chat page (static files under /app/static, strict CSP)
     GET  /me                           who the API thinks you are
     GET  /health
 
@@ -20,20 +25,21 @@ who the user is or what they may read.
 """
 
 import uuid
+from enum import Enum
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import config, db, tracing
+from . import chat, config, db, demo, tracing
 from .agent import AgentRunner, Decision, Outcome
 from .answer import Answer, ask
 from .app import System, build_system, build_workflows
 from .identity import User, get_user, list_users
-from .workflow import Gate, RunView, WorkflowRunner
+from .workflow import Event, Gate, RunMode, RunScope, RunSummary, RunView, WorkflowRunner
 
 _USER_HEADER = "X-User"
 _HTTP_UNAUTHORIZED = 401
@@ -43,19 +49,37 @@ _HTTP_CONFLICT = 409
 _HTTP_LENGTH_REQUIRED = 411
 _HTTP_TOO_LARGE = 413
 _HTTP_UNSUPPORTED = 415
+_HTTP_UNPROCESSABLE = 422
 _MAX_QUESTION_CHARS = 2000
+_MAX_RUN_ID_CHARS = 40
+_RUN_ID_PATTERN = r"^[A-Za-z0-9_-]+$"
 
 # BOQ uploads: small files of known types only, checked by content, not by name.
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 _UPLOAD_MAGIC = {".xlsx": b"PK\x03\x04", ".pdf": b"%PDF-"}  # .csv: UTF-8 text, checked below
 _UPLOAD_SUFFIXES = {".xlsx", ".csv", ".pdf"}
 _UPLOAD_DIR = "uploads"
+_QUOTE_SAMPLES_DIR = "quotes"
 _UPLOAD_PATH = "/workflows/boq"
 _FORM_OVERHEAD_BYTES = 64 * 1024  # multipart boundaries and headers around the file
 
 # The workflow page and the invented samples it can load. Nothing else is served.
 _STATIC_DIR = Path(__file__).parent / "static"
 _UI_SAMPLES = frozenset({"boq_villa_blockwork.xlsx", "boq_villa_blockwork.pdf", "boq_with_issues.csv"})
+
+# The chat page: files in one folder, looked up by name (never a path), each served with the CSP.
+_APP_DIR = _STATIC_DIR / "app"
+_APP_PAGE = "index.html"
+_APP_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
+_APP_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-cache",
+}
 
 
 # ---- request and response bodies -------------------------------------------
@@ -134,6 +158,17 @@ class WorkflowOut(BaseModel):
     policy: dict
     cost_usd: float
     tokens: int
+    mode: str
+    packages: list[dict]
+    quotes: list[dict]
+    comparison: list[dict]
+    agent_steps: list[dict]
+    events: list[dict]
+    can_decide: bool
+    decide_problem: str
+    orders: list[dict]  # done runs: one PO per vendor with its total
+    budget_after: str | None  # budget left once this run is held or spent
+    vendor_names: dict[str, str]  # vendor id -> name for the vendors asked to quote
 
 
 class MeOut(BaseModel):
@@ -141,6 +176,42 @@ class MeOut(BaseModel):
     name: str
     companies: list[str]
     roles: list[str]
+    llm: str  # offline | claude: the badge on the page
+    demo: bool  # demo controls shown (RAG_DEMO=on)
+
+
+class QuoteSample(str, Enum):
+    """Server-side sets of invented vendor replies; the request never names a path."""
+
+    ROUND1 = "round1"
+    ROUND2 = "round2"
+
+
+class EventBody(BaseModel):
+    event: Event
+    sample: QuoteSample | None = None  # needed for quotes_delivered
+
+
+class ChatBody(BaseModel):
+    message: str = Field(min_length=1, max_length=_MAX_QUESTION_CHARS)
+    run_id: str | None = Field(default=None, max_length=_MAX_RUN_ID_CHARS, pattern=_RUN_ID_PATTERN)
+
+
+class ChatOut(BaseModel):
+    intent: str
+    text: str
+    cards: list[dict]
+
+
+class RunSummaryOut(BaseModel):
+    run_id: str
+    entry: str
+    mode: str
+    status: str
+    pending_gate: str | None
+    requester: str
+    total: str
+    updated: str
 
 
 # ---- app --------------------------------------------------------------------
@@ -159,7 +230,10 @@ def create_app(
             app.state.system.store, app.state.system.composer, app.state.system.planner
         )
         app.state.workflows = workflows or build_workflows(app.state.system)
-        yield
+
+        # Held for the life of the process: `rag demo reset` refuses while a server runs.
+        with demo.server_running():
+            yield
         tracing.flush()
 
     app = FastAPI(title="Secure RAG", lifespan=lifespan)
@@ -170,12 +244,18 @@ def create_app(
     app.add_api_route("/agent/runs", _start_run, methods=["POST"], response_model=RunOut)
     app.add_api_route("/agent/runs/{run_id}/decision", _decide, methods=["POST"], response_model=RunOut)
     app.add_api_route("/workflows", _wf_start, methods=["POST"], response_model=WorkflowOut)
+    app.add_api_route("/workflows", _wf_list, methods=["GET"], response_model=list[RunSummaryOut])
     app.add_api_route("/workflows/boq", _wf_boq, methods=["POST"], response_model=WorkflowOut)
     app.add_api_route("/workflows/{run_id}/decision", _wf_decide, methods=["POST"], response_model=WorkflowOut)
+    app.add_api_route("/workflows/{run_id}/resume", _wf_resume, methods=["POST"], response_model=WorkflowOut)
+    app.add_api_route("/workflows/{run_id}/events", _wf_event, methods=["POST"], response_model=WorkflowOut)
+    app.add_api_route("/chat", _chat, methods=["POST"], response_model=ChatOut)
     app.add_api_route("/workflows/{run_id}", _wf_show, methods=["GET"], response_model=WorkflowOut)
     app.add_api_route("/ui", _ui_page, methods=["GET"], include_in_schema=False)
     app.add_api_route("/ui/users", _ui_users, methods=["GET"], include_in_schema=False)
     app.add_api_route("/ui/samples/{name}", _ui_sample, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/app", _app_page, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/app/static/{name}", _app_static, methods=["GET"], include_in_schema=False)
     return app
 
 
@@ -205,7 +285,10 @@ def _health() -> dict:
 
 
 def _me(user: CurrentUser) -> MeOut:
-    return MeOut(user_id=user.user_id, name=user.name, companies=sorted(user.companies), roles=sorted(user.roles))
+    return MeOut(
+        user_id=user.user_id, name=user.name, companies=sorted(user.companies), roles=sorted(user.roles),
+        llm=config.llm_kind().value, demo=config.demo_mode() is config.DemoMode.ON,
+    )
 
 
 def _ask(body: AskBody, user: CurrentUser, request: Request) -> AnswerOut:
@@ -245,7 +328,9 @@ def _wf_start(body: WorkflowBody, user: CurrentUser, request: Request) -> Workfl
         raise HTTPException(_HTTP_FORBIDDEN, str(error)) from None
 
 
-def _wf_boq(user: CurrentUser, request: Request, file: Annotated[UploadFile, File()]) -> WorkflowOut:
+def _wf_boq(
+    user: CurrentUser, request: Request, file: Annotated[UploadFile, File()], mode: Annotated[RunMode, Form()] = RunMode.CLASSIC
+) -> WorkflowOut:
     """Save the upload under a random name, run the BOQ path, then delete the file.
 
     The parse step is the only reader and runs before the first gate, so the
@@ -264,7 +349,7 @@ def _wf_boq(user: CurrentUser, request: Request, file: Annotated[UploadFile, Fil
     path = folder / f"{uuid.uuid4().hex}{suffix}"
     path.write_bytes(content)
     try:
-        return _wf_out(workflows.start_boq(user, path))
+        return _wf_out(workflows.start_boq(user, path, mode=mode))
     except PermissionError as error:
         raise HTTPException(_HTTP_FORBIDDEN, str(error)) from None
     finally:
@@ -287,10 +372,63 @@ def _wf_decide(run_id: str, body: WorkflowDecisionBody, user: CurrentUser, reque
     workflows: WorkflowRunner = request.app.state.workflows
     if not workflows.may_view(run_id, user):
         raise HTTPException(_HTTP_NOT_FOUND, "run not found")
+
+    # The run can move on between the check and the decision (another approver was faster):
+    # someone who may no longer see it gets the same 404 as for an unknown run.
     try:
-        return _wf_out(workflows.decide(run_id, user, body.decision, body.gate))
+        view = workflows.decide(run_id, user, body.decision, body.gate)
+    except ValueError as error:
+        if not workflows.may_view(run_id, user):
+            raise HTTPException(_HTTP_NOT_FOUND, "run not found") from None
+        raise HTTPException(_HTTP_CONFLICT, str(error)) from None
+    if not workflows.may_view(run_id, user):
+        raise HTTPException(_HTTP_NOT_FOUND, "run not found")
+    return _wf_out(view)
+
+
+def _wf_list(user: CurrentUser, request: Request, scope: Annotated[RunScope, Query()] = RunScope.MINE) -> list[RunSummaryOut]:
+    workflows: WorkflowRunner = request.app.state.workflows
+    return [RunSummaryOut(**vars(row)) for row in workflows.runs_for(user, scope)]
+
+
+def _wf_resume(run_id: str, user: CurrentUser, request: Request) -> WorkflowOut:
+    workflows: WorkflowRunner = request.app.state.workflows
+    try:
+        return _wf_out(workflows.resume(run_id, user))
+    except LookupError:
+        raise HTTPException(_HTTP_NOT_FOUND, "run not found") from None
     except ValueError as error:
         raise HTTPException(_HTTP_CONFLICT, str(error)) from None
+
+
+def _wf_event(run_id: str, body: EventBody, user: CurrentUser, request: Request) -> WorkflowOut:
+    """Demo only: stands in for the vendor mailbox and the deadline scheduler.
+
+    Replies come from a fixed server-side sample set; the sender is the file's
+    vendor id, as a mailbox would report it. Off unless RAG_DEMO=on.
+    """
+    if config.demo_mode() is not config.DemoMode.ON:
+        raise HTTPException(_HTTP_NOT_FOUND, "not found")
+    workflows: WorkflowRunner = request.app.state.workflows
+    quotes = None
+    if body.event is Event.QUOTES_DELIVERED:
+        if body.sample is None:
+            raise HTTPException(_HTTP_UNPROCESSABLE, "quotes_delivered needs a sample set")
+        folder = config.SAMPLES_DIR / _QUOTE_SAMPLES_DIR / body.sample.value
+        quotes = sorted((path.stem, path) for path in folder.glob("*.csv"))
+    try:
+        return _wf_out(workflows.deliver(run_id, body.event, user, quotes))
+    except LookupError:
+        raise HTTPException(_HTTP_NOT_FOUND, "run not found") from None
+    except PermissionError as error:
+        raise HTTPException(_HTTP_FORBIDDEN, str(error)) from None
+    except ValueError as error:
+        raise HTTPException(_HTTP_CONFLICT, str(error)) from None
+
+
+def _chat(body: ChatBody, user: CurrentUser, request: Request) -> ChatOut:
+    reply = chat.route_message(request.app.state.system, request.app.state.workflows, user, body.message, body.run_id)
+    return ChatOut(intent=reply.intent.value, text=reply.text, cards=reply.cards)
 
 
 def _wf_show(run_id: str, user: CurrentUser, request: Request) -> WorkflowOut:
@@ -349,6 +487,17 @@ def _wf_out(view: RunView) -> WorkflowOut:
         policy=view.policy,
         cost_usd=view.cost_usd,
         tokens=view.tokens,
+        mode=view.mode.value,
+        packages=[] if hidden else view.packages,
+        quotes=view.quotes,
+        comparison=view.comparison,
+        agent_steps=view.agent_steps,
+        events=view.events,
+        can_decide=view.can_decide,
+        decide_problem=view.decide_problem,
+        orders=[] if hidden else view.orders,
+        budget_after=f"{view.budget_after:.2f}" if view.budget_after is not None else None,
+        vendor_names={} if hidden else view.vendor_names,
     )
 
 
@@ -357,6 +506,19 @@ def _wf_out(view: RunView) -> WorkflowOut:
 
 def _ui_page() -> FileResponse:
     return FileResponse(_STATIC_DIR / "workflow.html", media_type="text/html")
+
+
+def _app_page() -> FileResponse:
+    return FileResponse(_APP_DIR / _APP_PAGE, media_type="text/html", headers=_APP_HEADERS)
+
+
+def _app_static(name: str) -> FileResponse:
+    """A file of the chat page by name. Only files of the listed types in the app folder exist."""
+    files = {path.name: path for path in _APP_DIR.iterdir() if path.suffix in _APP_TYPES and path.is_file()}
+    path = files.get(name)
+    if path is None:
+        raise HTTPException(_HTTP_NOT_FOUND, "no such file")
+    return FileResponse(path, media_type=_APP_TYPES[path.suffix], headers=_APP_HEADERS)
 
 
 def _ui_users() -> list[dict]:
