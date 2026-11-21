@@ -3,10 +3,10 @@
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
-from secure_rag import config, tracing
-from secure_rag.agent import AgentRunner, KeywordPlanner
-from secure_rag.app import System, build_system
-from secure_rag.config import EmbedderKind, LlmKind
+from secure_rag.core import config, tracing
+from secure_rag.workflow.agent import AgentRunner, KeywordPlanner
+from secure_rag.web.app import System, build_system
+from secure_rag.core.config import EmbedderKind, LlmKind
 
 
 @pytest.fixture(autouse=True)

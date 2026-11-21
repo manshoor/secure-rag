@@ -67,6 +67,17 @@ Everything runs offline by default (no API key, no cost). Set `RAG_LLM=claude` t
                                                same company ─► execute ─► outbox
 ```
 
+Code layout (`src/secure_rag/`, tests mirror it under `tests/`):
+
+```
+core/      config, identity, db, audit, tracing, llm      shared by everything
+rag/       ingest, embed, store, answer, guard, evaluate  documents in, cited answers out
+boq/       boq_parser, _xlsx_child, boq, quotes           BOQ and quote files to checked lines
+workflow/  workflow, procurement_agent, agent, policy,    LangGraph runs, gates, approvals,
+           intake, systems, run_index, workflow_eval      system stand-ins
+web/       api, chat, cli, demo, app, static/             HTTP API, chat page, CLI, wiring
+```
+
 ## Run
 
 Needs [uv](https://docs.astral.sh/uv/).
@@ -158,9 +169,9 @@ uv run rag workflow approve <run id> --approver omar
 uv run rag workflow approve <run id> --approver faisal                      # 4 purchase orders, AED 33,015.00
 ```
 
-Chat page: `RAG_AUTH=header RAG_DEMO=on uv run uvicorn secure_rag.api:app --port 8010`, then open http://127.0.0.1:8010/app (add `?as=omar` to start as someone else; two windows side by side work). People ask questions, attach a BOQ, and decide on cards; typed text never decides. With `RAG_DEMO=on` a dashed "Demo control" box stands in for vendor email and the deadline scheduler. `RAG_DEMO=on uv run rag demo reset --yes` clears runs, holds, outbox and checkpoints between rehearsals (stop the server first; the audit log stays). The page is plain JavaScript modules with a strict Content Security Policy; it writes server data as text only. The design boards it follows are in `design/artboards`.
+Chat page: `RAG_AUTH=header RAG_DEMO=on uv run uvicorn secure_rag.web.api:app --port 8010`, then open http://127.0.0.1:8010/app (add `?as=omar` to start as someone else; two windows side by side work). People ask questions, attach a BOQ, and decide on cards; typed text never decides. With `RAG_DEMO=on` a dashed "Demo control" box stands in for vendor email and the deadline scheduler. `RAG_DEMO=on uv run rag demo reset --yes` clears runs, holds, outbox and checkpoints between rehearsals (stop the server first; the audit log stays). The page is plain JavaScript modules with a strict Content Security Policy; it writes server data as text only. The design boards it follows are in `design/artboards`.
 
-Browser (classic page): `RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010`, then open http://127.0.0.1:8010/ui. Pick a user, start a request or load a sample BOQ, and approve or reject as the selected user. `WALKTHROUGH.md` has a five-minute walkthrough.
+Browser (classic page): `RAG_AUTH=header uv run uvicorn secure_rag.web.api:app --port 8010`, then open http://127.0.0.1:8010/ui. Pick a user, start a request or load a sample BOQ, and approve or reject as the selected user. `WALKTHROUGH.md` has a five-minute walkthrough.
 
 ### BOQ parsers
 
@@ -231,7 +242,7 @@ Unit tests ignore `DATABASE_URL` and `QDRANT_URL`, so running them in a shell th
 ## HTTP API
 
 ```sh
-RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010      # docs at http://127.0.0.1:8010/docs
+RAG_AUTH=header uv run uvicorn secure_rag.web.api:app --port 8010      # docs at http://127.0.0.1:8010/docs
 ```
 
 | Method | Path | Body |

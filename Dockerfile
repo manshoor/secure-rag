@@ -17,4 +17,4 @@ RUN uv sync --frozen --no-dev
 EXPOSE 8010
 
 # setup only adds missing users and documents, so restarts keep live access changes.
-CMD ["sh", "-c", "rag db setup && uvicorn secure_rag.api:app --host 0.0.0.0 --port 8010"]
+CMD ["sh", "-c", "rag db setup && uvicorn secure_rag.web.api:app --host 0.0.0.0 --port 8010"]

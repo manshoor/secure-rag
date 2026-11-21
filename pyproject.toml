@@ -27,7 +27,7 @@ docling = ["docling>=2.140"]
 llamaparse = ["llama-cloud>=2.19"]
 
 [project.scripts]
-rag = "secure_rag.cli:main"
+rag = "secure_rag.web.cli:main"
 
 [dependency-groups]
 dev = [

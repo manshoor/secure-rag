@@ -7,7 +7,7 @@ Offline: no API key, no cost. All companies, people, vendors, prices and BOQs ar
 ```sh
 uv sync
 rm -f data/runtime/outbox.jsonl data/runtime/budget_ledger.json   # empty outbox, no budget holds
-RAG_AUTH=header uv run uvicorn secure_rag.api:app --port 8010
+RAG_AUTH=header uv run uvicorn secure_rag.web.api:app --port 8010
 ```
 
 Open http://127.0.0.1:8010/ui. Zoom the browser to 125% if the screen is shared.

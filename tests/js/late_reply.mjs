@@ -2,7 +2,7 @@
 //   node tests/js/late_reply.mjs <scenario>     exit 0: pass, 1: fail (message on stderr)
 // One scenario per process: app.js is a module and starts once.
 
-const APP = new URL("../../src/secure_rag/static/app/app.js", import.meta.url).href;
+const APP = new URL("../../src/secure_rag/web/static/app/app.js", import.meta.url).href;
 const scenario = process.argv[2];
 
 // ---- a fake DOM: just what app.js uses ----------------------------------------------------------
