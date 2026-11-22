@@ -13,7 +13,7 @@ Everything runs offline by default (no API key, no cost). Set `RAG_LLM=claude` t
 | Role-based access between group companies | `identity.py` rule, enforced in the Qdrant filter, the BM25 index and again after fusion |
 | Answers with verifiable source references | `answer.py`; each answer cites document and section |
 | Right sources, wrong answer: caught before the user sees it | `guard.py`: answers keep to the company the question names; every sentence is cited; every number must appear in its cited source or the question |
-| Prompt-injection protection | `guard.py`: quarantine at ingestion, sources wrapped as data, output checks |
+| Prompt-injection protection | `guard.py`: quarantine at ingestion, sources wrapped as data, output checks; `rag injection-eval` plants instructions in BOQs, quotes, chat and questions and checks no outcome changes |
 | Leak detection | canary string in the restricted board memo; any answer containing it is blocked |
 | Tool-using agent, workflow states, checkpoints, human approval | `agent.py` (LangGraph `interrupt`, SQLite checkpoints) |
 | Evaluation: retrieval, citations, sections, wrong facts, context recall, refusals, leaks, cost, latency | `evaluate.py`, `data/golden.json` |
@@ -84,7 +84,7 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 414 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
+uv run pytest -q                 # 453 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
 uv run playwright install chromium   # once, about 100 MB: the 4 browser tests (-m ui) skip without it
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
@@ -155,9 +155,15 @@ uv run rag workflow approve <run id> --approver omar
 uv run rag workflow approve <run id> --approver noura           # AED 215,925.00: executive only
 
 uv run rag workflow-eval                                         # 11 workflow cases, offline
+uv run rag injection-eval                                        # 8 planted-instruction cases, offline
+uv run rag injection-eval --model hostile                        # same, with fake models that obey the planted text
 ```
 
+The injection eval runs offline whatever `RAG_LLM` says, with tracing off, and refuses to run while `DATABASE_URL` is set.
+
 Agent mode adds quote requests under the three-quote rule. The procurement agent picks approved vendors and drafts one request each; procurement approves sending; replies are checked by code (arithmetic, units, sender, validity); too few valid quotes go back to procurement to extend once or drop the lines; the lowest valid quote per package joins the total; then the same two gates, and one purchase order per vendor.
+
+Who picks each step: offline, fixed rules take the first tool code allows. With `RAG_LLM=claude`, Claude picks the step from the same list; it sees ids, counts, amounts and statuses, never line or file text. Code authorizes every step, and the timeline shows code's fixed reason for each tool, never model words. A refused pick, a repeated pick with nothing changed, a refusal, an API error or a broken reply hands that step to the rules, marked "fallback"; three refused picks between two pauses stop the run for a person. A refused pick is recorded as `unknown` with no arguments, so model wording never reaches the timeline, audit or traces. Private BOQs never reach Claude.
 
 ```sh
 uv run rag workflow boq --user khalid --mode agent data/samples/boq_with_issues.csv
@@ -296,7 +302,7 @@ LangChain's own LangSmith tracing stays off, even with `LANGSMITH_TRACING=true`:
 
 | Env var | Default | Meaning |
 | --- | --- | --- |
-| `RAG_LLM` | `offline` | `claude` uses Claude for answers and planning (costs money) |
+| `RAG_LLM` | `offline` | `claude` uses Claude for answers, agent steps and chat routing (costs money) |
 | `RAG_MODEL` | `claude-opus-5-5` | Claude model id |
 | `RAG_EMBEDDER` | `hash` | `ollama` uses a local Ollama embedding model |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama model |
@@ -313,7 +319,7 @@ LangChain's own LangSmith tracing stays off, even with `LANGSMITH_TRACING=true`:
 | `RAG_SYSTEMS_DIR` | `data/systems` | HR, catalogue and budget files |
 | `RAG_TODAY` | today | fixed date (YYYY-MM-DD) for resolving "1 Dec" in tests |
 
-With `RAG_LLM=claude` the workflow also uses Claude to read the request into fields (JSON schema; code validates every field against the HR file and the catalogue), to write a two-line note for each approver, and to suggest a canonical description for weak BOQ lines (code still scores and decides).
+With `RAG_LLM=claude` the workflow also uses Claude to read the request into fields (JSON schema; code validates every field against the HR file and the catalogue), to write a two-line note for each approver, and to suggest a canonical description for weak BOQ lines (code still scores and decides). In chat, keyword rules route a message first; only one they miss goes to Claude, which returns one intent from a fixed list. Typed text still never decides.
 
 Claude calls use structured JSON output, a server-side fallback when the model declines, and record tokens, cost and time.
 

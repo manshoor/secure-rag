@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..core import db
 from ..workflow.agent import ClaudePlanner, KeywordPlanner, Planner
@@ -21,6 +22,7 @@ class System:
     store: KnowledgeStore
     composer: Composer
     planner: Planner
+    router: Any = None  # chat.ClaudeRouter in Claude mode; None means keyword rules only
 
 
 def build_system(
@@ -37,7 +39,9 @@ def build_system(
 
     store = KnowledgeStore(make_embedder(embedder or embedder_kind()), report.chunks, report.documents)
     if (llm or llm_kind()) is LlmKind.CLAUDE:
-        return System(report, store, ClaudeComposer(), ClaudePlanner())
+        from .chat import ClaudeRouter  # chat imports this module
+
+        return System(report, store, ClaudeComposer(), ClaudePlanner(), ClaudeRouter())
     return System(report, store, ExtractiveComposer(), KeywordPlanner())
 
 
@@ -45,10 +49,12 @@ def build_workflows(system: System, checkpointer=None):
     """Workflow runner for this system: offline intake and notes, or Claude when RAG_LLM=claude."""
     from ..boq.boq import ClaudeCanonicalizer
     from ..workflow.intake import ClaudeIntake, ClaudeSummarizer, OfflineIntake, TemplateSummarizer
+    from ..workflow.procurement_agent import ClaudeStepPlanner
     from ..workflow.workflow import WorkflowRunner
 
     if isinstance(system.planner, ClaudePlanner):
         return WorkflowRunner(
-            system.store, system.composer, ClaudeIntake(), checkpointer, ClaudeSummarizer(), canonicalizer=ClaudeCanonicalizer()
+            system.store, system.composer, ClaudeIntake(), checkpointer, ClaudeSummarizer(),
+            canonicalizer=ClaudeCanonicalizer(), step_planner=ClaudeStepPlanner(),
         )
     return WorkflowRunner(system.store, system.composer, OfflineIntake(), checkpointer, TemplateSummarizer())

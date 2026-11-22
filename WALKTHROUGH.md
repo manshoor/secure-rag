@@ -67,6 +67,7 @@ Open http://127.0.0.1:8010/ui. Zoom the browser to 125% if the screen is shared.
 
 ```sh
 uv run rag workflow-eval            # 11 cases, offline
+uv run rag injection-eval           # 8 planted-instruction cases, offline
 uv run pytest -q                    # 244 offline tests
 uv run rag boq-check data/samples/boq_villa_blockwork.xlsx --expected data/samples/boq_villa_blockwork.labels.json
 ```

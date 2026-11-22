@@ -380,7 +380,9 @@ def test_tool_not_allowed_is_refused_and_three_refusals_stop(system):
     run = wf.start_boq(get_user("khalid"), ISSUES_CSV, mode=RunMode.AGENT)
     assert run.status is WfStatus.STOPPED
     assert "needs a person" in run.reason
-    assert [step["status"] for step in run.agent_steps] == ["refused"] * MAX_REFUSALS
+    # Each refusal hands that step to the rules; the third one stops the run.
+    assert [step["status"] for step in run.agent_steps].count("refused") == MAX_REFUSALS
+    assert all(step["fallback"] for step in run.agent_steps if step["status"] == "done")
     assert _outbox() == []
 
 
@@ -391,12 +393,12 @@ def test_bad_arguments_are_refused(system):
     assert _outbox() == []
 
 
-def test_a_repeated_step_with_no_change_stops(system):
+def test_a_planner_repeating_a_step_hands_it_to_the_rules(system):
+    """policy_rule is always allowed; picking it again with nothing changed must not end the run."""
     wf = _runner(system, _Fixed(Tool.POLICY_RULE.value))
     run = wf.start_boq(get_user("khalid"), ISSUES_CSV, mode=RunMode.AGENT)
-    assert run.status is WfStatus.STOPPED
-    assert "repeated" in run.reason
-    assert len(run.agent_steps) == 2
+    assert run.status is WfStatus.AWAITING_RFQ
+    assert any(step["fallback"] for step in run.agent_steps)
 
 
 def test_step_limit_stops_the_loop(system, monkeypatch):
@@ -418,7 +420,7 @@ def test_a_declined_planner_step_falls_back_to_the_rules(system):
     assert all(step["fallback"] for step in run.agent_steps)
 
 
-def test_a_why_line_with_an_unknown_number_is_dropped(system):
+def test_the_timeline_shows_codes_reason_not_the_planners(system):
     class Inventive(ScriptedPlanner):
         def next_step(self, facts, allowed):
             proposal, usage = super().next_step(facts, allowed)
@@ -426,7 +428,7 @@ def test_a_why_line_with_an_unknown_number_is_dropped(system):
 
     wf = _runner(system, Inventive())
     run = wf.start_boq(get_user("khalid"), ISSUES_CSV, mode=RunMode.AGENT)
-    assert all(step["why"] == "" for step in run.agent_steps)
+    assert run.agent_steps and all(step["why"] == procurement_agent._WHY[Tool(step["tool"])] for step in run.agent_steps)
 
 
 def test_private_runs_always_use_the_rules(system, monkeypatch, tmp_path):

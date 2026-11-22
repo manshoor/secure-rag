@@ -95,6 +95,18 @@ def reset() -> None:
     _state.update(client=None, ready=False, langsmith=None, langsmith_ready=False)
 
 
+@contextmanager
+def paused() -> Iterator[None]:
+    """Send nothing inside this block; the clients in use before are in use after."""
+    saved = dict(_state)
+    configure(None)
+    configure_langsmith(None)
+    try:
+        yield
+    finally:
+        _state.update(saved)
+
+
 def make_client(**options: Any) -> Langfuse:
     """A Langfuse client that exports only this app's spans.
 

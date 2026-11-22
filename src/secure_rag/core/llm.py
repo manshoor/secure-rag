@@ -41,6 +41,10 @@ class ModelRefused(RuntimeError):
     """Claude's safety layer declined the request."""
 
 
+class ModelUnavailable(RuntimeError):
+    """The call failed (network, API error, a reply cut off): the caller may fall back."""
+
+
 class ClaudeClient:
     """Calls Claude with structured output so replies always parse."""
 

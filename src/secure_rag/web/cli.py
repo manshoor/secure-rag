@@ -21,9 +21,11 @@ from pathlib import Path
 
 from . import demo
 from ..core import db, tracing
+from ..core.config import LlmKind
 from ..workflow.agent import AgentRunner, Decision, Outcome, Status
 from ..rag.answer import ask
 from .app import build_system, build_workflows
+from .injection_eval import Kit
 from ..boq.boq_parser import BoqParseError, ParserKind, parser_kind
 from ..core.config import DOCS_DIR, GOLDEN_FILE
 from ..rag.evaluate import format_report, run_eval, save_run
@@ -60,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
 
     commands.add_parser("eval", help="run the golden evaluation set")
     commands.add_parser("workflow-eval", help="run the workflow cases offline")
+    injection_cmd = commands.add_parser("injection-eval", help="planted instructions against every input (offline unless --model claude)")
+    injection_cmd.add_argument("--model", choices=[kit.value for kit in Kit], default=Kit.OFFLINE.value,
+                               help="offline (free), hostile (fake models that obey the planted text; free) or claude (paid)")
 
     workflow_cmd = commands.add_parser("workflow", help="cross-department workflow: HR -> procurement -> finance")
     flows = workflow_cmd.add_subparsers(dest="flow", required=True)
@@ -312,8 +317,23 @@ def _workflow_eval(_: argparse.Namespace) -> int:
     return _EXIT_OK if all(result.passed for result in results) else _EXIT_FAIL
 
 
+def _injection_eval(args: argparse.Namespace) -> int:
+    from .injection_eval import format_injection_report, run_injection_eval
+
+    # Refuse a real database before building anything; the eval itself checks again.
+    if db.enabled():
+        print("injection-eval writes test audit lines: unset DATABASE_URL first", file=sys.stderr)
+        return _EXIT_FAIL
+
+    # The system is offline whatever RAG_LLM says: only the kit picks the models.
+    results = run_injection_eval(build_system(llm=LlmKind.OFFLINE), Kit(args.model))
+    print(format_injection_report(results))
+    return _EXIT_OK if all(result.safe for result in results) else _EXIT_FAIL
+
+
 _HANDLERS = {"users": _users, "ingest": _ingest, "ask": _ask, "agent": _agent, "approve": _approve, "eval": _eval, "db": _db, "role": _role,
-             "workflow": _workflow, "boq-check": _boq_check, "workflow-eval": _workflow_eval, "demo": _demo}
+             "workflow": _workflow, "boq-check": _boq_check, "workflow-eval": _workflow_eval, "demo": _demo,
+             "injection-eval": _injection_eval}
 
 if __name__ == "__main__":
     sys.exit(main())
