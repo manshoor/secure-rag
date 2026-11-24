@@ -3,12 +3,15 @@
 import uuid
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from secure_rag.core import tracing
+from secure_rag.core import config, tracing
 from secure_rag.rag.answer import ask
 from secure_rag.core.identity import get_user
+from secure_rag.workflow.intake import OfflineIntake
+from secure_rag.workflow.workflow import Decision, RunMode, WorkflowRunner
 
 _QUESTION = "How many leave days can I carry over?"
 
@@ -128,3 +131,11 @@ def test_only_own_spans_are_exported():
             span.set_attribute("gen_ai.operation.name", "chat")
     client.flush()
     assert [span.name for span in exporter.get_finished_spans()] == ["ask"]
+
+
+def test_a_case_is_one_langfuse_session(system, spans, monkeypatch):
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    workflows = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
+    view = workflows.start_boq(get_user("khalid"), config.SAMPLES_DIR / "boq_with_issues.csv", mode=RunMode.AGENT)
+    workflows.decide(view.run_id, get_user("omar"), Decision.APPROVE)
+    assert {dict(span.attributes).get("session.id") for span in spans()} == {view.run_id}

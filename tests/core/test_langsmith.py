@@ -221,6 +221,7 @@ def test_a_private_run_sends_no_text_even_in_full_mode(system, runs, monkeypatch
     workflows.view(view.run_id, get_user("omar"))  # an approver's view runs the policy lookup too
     assert {run["name"] for run in runs.created} >= {"workflow_start", "ask"}
     assert _texts(runs) == []
+    assert {_session(run) for run in runs.created} == {view.run_id}  # the case id is still sent
 
 
 def test_a_private_decision_sends_no_reason(system, runs, monkeypatch):
@@ -249,3 +250,96 @@ def test_langfuse_error_sends_its_type_only():
     (span,) = exporter.get_finished_spans()
     sent = f"{dict(span.attributes)} {span.status} {[(e.name, dict(e.attributes)) for e in span.events]}"
     assert "ValueError" in sent and "secret line text" not in sent
+
+
+# ---- one case, one thread ----------------------------------------------------------------------
+
+
+def _session(run) -> str | None:
+    return run["extra"]["metadata"].get("session_id")
+
+
+def test_every_run_of_a_case_shares_one_thread(system, runs, monkeypatch):
+    """Start, views and decisions are separate traces; session_id joins them as one LangSmith thread."""
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    workflows = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
+    view = workflows.start_boq(get_user("khalid"), _ISSUES, mode=RunMode.AGENT)
+    workflows.view(view.run_id, get_user("omar"))
+    workflows.decide(view.run_id, get_user("omar"), Decision.APPROVE)
+    assert {run["name"] for run in runs.created} >= {"workflow_start", "workflow_decide", "agent_step", "ask", "retrieve"}
+    assert len({run["trace_id"] for run in runs.created}) > 1
+    assert {_session(run) for run in runs.created} == {view.run_id}
+
+
+def test_two_cases_are_two_threads(system, runs, monkeypatch):
+    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    workflows = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
+    first = workflows.start_boq(get_user("khalid"), _ISSUES, mode=RunMode.AGENT)
+    second = workflows.start_boq(get_user("khalid"), _ISSUES, mode=RunMode.AGENT)
+    assert {_session(run) for run in runs.created} == {first.run_id, second.run_id}
+
+
+def test_a_plain_question_has_no_thread(system, runs):
+    ask(system.store, system.composer, get_user("sara"), _QUESTION)
+    assert {_session(run) for run in runs.created} == {None}
+
+
+# ---- model calls: LangSmith's own token and cost columns -----------------------------------------
+
+
+def _generate(prompt: str = "secret prompt") -> None:
+    """The calls ClaudeClient.complete_json makes around one model call."""
+    with tracing.observe("generate", as_type="generation", model="claude-opus-5-5", input=tracing.content(prompt)) as span:
+        span.update(
+            model="claude-opus-5-5",
+            usage_details={"input": 1000, "output": 50},
+            cost_details={"total": 0.005},
+            metadata={"stop_reason": "end_turn"},
+        )
+        span.update(output=tracing.content("secret reply"))
+
+
+def test_a_model_call_fills_the_token_and_cost_columns(runs):
+    _generate()
+    (run,) = runs.updated
+    sent = run["extra"]["metadata"]
+    assert sent["usage_metadata"] == {
+        "input_tokens": 1000,
+        "output_tokens": 50,
+        "total_tokens": 1050,
+        "input_cost": pytest.approx(0.004),
+        "output_cost": pytest.approx(0.001),
+        "total_cost": 0.005,
+    }
+    assert (sent["ls_provider"], sent["ls_model_name"]) == ("anthropic", "claude-opus-5-5")
+    assert runs.created[0]["run_type"] == "llm"
+
+    # The keys sent before stay.
+    assert sent["usage_details"] == {"input": 1000, "output": 50} and sent["cost_details"] == {"total": 0.005}
+    assert sent["model"] == "claude-opus-5-5" and sent["stop_reason"] == "end_turn"
+
+
+def test_usage_without_cost_sends_tokens_only(runs):
+    with tracing.observe("generate", as_type="generation") as span:
+        span.update(usage_details={"input": 3, "output": 2})
+    (run,) = runs.updated
+    assert run["extra"]["metadata"]["usage_metadata"] == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+
+
+def test_a_run_without_usage_sends_none(system, runs):
+    ask(system.store, system.composer, get_user("sara"), _QUESTION)
+    for run in runs.created + runs.updated:
+        assert not {"usage_metadata", "ls_provider", "ls_model_name"} & set(run["extra"]["metadata"])
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_usage_adds_no_text(runs, monkeypatch, private):
+    """ids mode, and a private run even in full mode."""
+    if private:
+        monkeypatch.setenv("RAG_TRACE_CONTENT", "full")
+        with tracing.counts_only():
+            _generate()
+    else:
+        _generate()
+    assert _texts(runs) == [] and "secret" not in runs.sent()
+    assert runs.updated[0]["extra"]["metadata"]["usage_metadata"]["total_tokens"] == 1050

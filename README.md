@@ -84,7 +84,7 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 453 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
+uv run pytest -q                 # 462 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
 uv run playwright install chromium   # once, about 100 MB: the 4 browser tests (-m ui) skip without it
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
@@ -282,7 +282,7 @@ curl -s localhost:8010/ask -H 'X-User: sara' -H 'Content-Type: application/json'
 
 Langfuse is off unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (plus `LANGFUSE_BASE_URL` for a self-hosted Langfuse). Each answer returns its Langfuse `trace_id`.
 
-LangSmith is off unless `LANGSMITH_KEY` is set (plus `LANGSMITH_ENDPOINT` for another region or a self-hosted server). Runs go to the `secure-rag` project. Both can be on at once; each gets the same observations with the same fields.
+LangSmith is off unless `LANGSMITH_KEY` is set (plus `LANGSMITH_ENDPOINT` for another region or a self-hosted server). Runs go to the `secure-rag` project. Both can be on at once; each gets the same observations with the same fields. Every run of one case carries its case id as `session_id`, so the case is one thread in LangSmith and one session in Langfuse. Plain questions have none.
 
 ```
 ask            user id, tags, refused, reason, cited doc ids, cost

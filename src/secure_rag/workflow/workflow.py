@@ -328,7 +328,7 @@ class WorkflowRunner:
             if decision not in gate_choices(waiting):
                 raise ValueError(f"the {waiting.value} gate takes {' or '.join(sorted(d.value for d in gate_choices(waiting)))}")
             command = Command(resume={"approver": approver.user_id, "decision": decision.value})
-            with tracing.attributes(approver.user_id, [_TRACE_TAG]), tracing.observe(
+            with tracing.attributes(approver.user_id, [_TRACE_TAG], run_id), tracing.observe(
                 "workflow_decide", as_type="chain", metadata={"run": run_id, "decision": decision.value}
             ) as span:
                 self._graph.invoke(command, _thread(run_id))
@@ -350,7 +350,7 @@ class WorkflowRunner:
             snapshot = self._graph.get_state(_thread(run_id))
             if _paused(snapshot) or not snapshot.next:
                 raise ValueError(f"run {run_id} has nothing to resume")
-            with tracing.attributes(user.user_id, [_TRACE_TAG]), tracing.observe(
+            with tracing.attributes(user.user_id, [_TRACE_TAG], run_id), tracing.observe(
                 "workflow_resume", as_type="chain", metadata={"run": run_id, "next": list(snapshot.next)}
             ):
                 self._graph.invoke(None, _thread(run_id))
@@ -378,7 +378,7 @@ class WorkflowRunner:
                 raise ValueError("a delivery needs at least one quote file")
             files = [{"sender": sender, "path": str(path)} for sender, path in (quotes or [])]
             command = Command(resume={"event": event.value, "by": user.user_id, "quotes": files})
-            with tracing.attributes(user.user_id, [_TRACE_TAG]), tracing.observe(
+            with tracing.attributes(user.user_id, [_TRACE_TAG], run_id), tracing.observe(
                 "workflow_deliver", as_type="chain", metadata={"run": run_id, "event": event.value, "files": len(files)}
             ):
                 self._graph.invoke(command, _thread(run_id))
@@ -472,7 +472,7 @@ class WorkflowRunner:
         }
         # A row before the run starts: a run that crashes on its first step still shows in "my cases".
         self._record_row(_start_row(state))
-        with tracing.attributes(user.user_id, [_TRACE_TAG]), tracing.observe(
+        with tracing.attributes(user.user_id, [_TRACE_TAG], run_id), tracing.observe(
             "workflow_start", as_type="chain", metadata={"run": run_id, "entry": entry.value}
         ) as span:
             self._graph.invoke(state, _thread(run_id))
@@ -847,7 +847,7 @@ class WorkflowRunner:
             return {}
         key = (run_id, viewer.user_id, tuple(sorted(viewer.roles)), tuple(sorted(viewer.companies)))
         if key not in self._policy_cache:
-            with _trace_scope(values):
+            with _trace_scope(values), tracing.attributes(viewer.user_id, [_TRACE_TAG], run_id):
                 answer = ask(self._store, self._composer, viewer, question)
             cited = [c for c in answer.citations if c.doc_id == _POLICY_DOC]
             if answer.refused or not cited:

@@ -298,7 +298,7 @@ class AgentRunner:
     def start(self, user: User, request: str) -> Outcome:
         """Run a new request until it finishes or pauses for approval."""
         thread_id = uuid.uuid4().hex[:12]
-        with tracing.attributes(user.user_id, [_TRACE_TAG]), tracing.observe(
+        with tracing.attributes(user.user_id, [_TRACE_TAG], thread_id), tracing.observe(
             "agent_start", as_type="agent", input=tracing.content(request), metadata={"run": thread_id}
         ) as span:
             self._graph.invoke({"run_id": thread_id, "user_id": user.user_id, "request": request}, _thread(thread_id))
@@ -318,7 +318,7 @@ class AgentRunner:
             if not any(task.interrupts for task in snapshot.tasks):
                 raise ValueError(f"run {thread_id} is not waiting for approval")
             command = Command(resume={"approver": approver.user_id, "decision": decision.value})
-            with tracing.attributes(approver.user_id, [_TRACE_TAG]), tracing.observe(
+            with tracing.attributes(approver.user_id, [_TRACE_TAG], thread_id), tracing.observe(
                 "agent_resume", as_type="agent", metadata={"run": thread_id, "decision": decision.value}
             ) as span:
                 self._graph.invoke(command, _thread(thread_id))

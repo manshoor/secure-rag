@@ -27,6 +27,8 @@ from langfuse import Langfuse, propagate_attributes
 from langfuse.span_filter import is_langfuse_span
 from langsmith.run_trees import RunTree
 
+from .config import PRICE_INPUT_PER_MTOK, PRICE_OUTPUT_PER_MTOK, TOKENS_PER_MTOK
+
 _KEY_VARS = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
 _LANGSMITH_KEY_VAR = "LANGSMITH_KEY"  # not LANGSMITH_API_KEY, so LangChain never picks it up
 _SERVICE_NAME = "secure-rag"  # shown as the service in Langfuse, the project in LangSmith
@@ -37,6 +39,7 @@ _log = logging.getLogger(__name__)
 
 # Langfuse observation types -> LangSmith run types; anything else is a chain.
 _RUN_TYPES = {"generation": "llm", "retriever": "retriever"}
+_LLM_PROVIDER = "anthropic"  # every traced model call is a Claude call
 
 # Turn off LangChain's tracer for the whole process (it checks this switch first).
 langsmith.configure(enabled=False)
@@ -196,14 +199,19 @@ def observe(name: str, as_type: str = "span", **fields: Any) -> Iterator[Any]:
 
 
 @contextmanager
-def attributes(user_id: str, tags: list[str]) -> Iterator[None]:
-    """Tag every observation opened inside with the user and tags."""
-    token = _run_tags.set({"user_id": user_id, "tags": tags})
+def attributes(user_id: str, tags: list[str], session_id: str | None = None) -> Iterator[None]:
+    """Tag every observation opened inside with the user, tags and session.
+
+    The session is the case id: it joins a case's separate traces into one
+    LangSmith thread and one Langfuse session. A nested call keeps the outer one.
+    """
+    session = session_id or _run_tags.get().get("session_id")
+    token = _run_tags.set({"user_id": user_id, "tags": tags, "session_id": session})
     try:
         if _client() is None:
             yield
             return
-        with propagate_attributes(user_id=user_id, tags=tags):
+        with propagate_attributes(user_id=user_id, tags=tags, session_id=session):
             yield
     finally:
         _run_tags.reset(token)
@@ -233,6 +241,7 @@ def flush() -> None:
 #     observe("retrieve")     ->   child "retrieve"   parent from _parent_run
 #
 # Fields map as: input -> inputs, output -> outputs, everything else -> metadata.
+# Model, usage and cost also go in the metadata keys LangSmith's columns read (_llm_metadata).
 
 
 @contextmanager
@@ -254,6 +263,8 @@ def _langsmith_run(name: str, as_type: str, fields: dict[str, Any]) -> Iterator[
     else:
         run = RunTree(name=name, run_type=run_type, inputs=inputs, ls_client=client, project_name=_SERVICE_NAME, tags=tags.get("tags"))
     run.extra["metadata"] = {"user_id": tags.get("user_id", "")}  # create_child copies the parent's; drop them
+    if tags.get("session_id"):
+        run.extra["metadata"]["session_id"] = tags["session_id"]
     _update_run(run, {key: value for key, value in fields.items() if key != "input"})
     run.post()
 
@@ -276,8 +287,30 @@ def _update_run(run: RunTree, fields: dict[str, Any]) -> None:
         run.outputs = _wrap("output", output)
     metadata = {key: value for key, value in fields.items() if key not in ("input", "output", "metadata")}
     metadata.update(fields.get("metadata") or {})
+    metadata.update(_llm_metadata(fields))
     if metadata:
         run.add_metadata(metadata)
+
+
+def _llm_metadata(fields: dict[str, Any]) -> dict[str, Any]:
+    """The metadata behind LangSmith's model, token and cost columns; empty without a model or usage."""
+    found: dict[str, Any] = {}
+    if fields.get("model"):
+        found = {"ls_provider": _LLM_PROVIDER, "ls_model_name": fields["model"]}
+    usage = fields.get("usage_details")
+    if not usage:
+        return found
+
+    tokens_in, tokens_out = usage["input"], usage["output"]
+    columns = {"input_tokens": tokens_in, "output_tokens": tokens_out, "total_tokens": tokens_in + tokens_out}
+
+    # LangSmith documents a cost per side for model calls; the caller sends the total only.
+    cost = fields.get("cost_details")
+    if cost:
+        columns["input_cost"] = tokens_in * PRICE_INPUT_PER_MTOK / TOKENS_PER_MTOK
+        columns["output_cost"] = tokens_out * PRICE_OUTPUT_PER_MTOK / TOKENS_PER_MTOK
+        columns["total_cost"] = cost["total"]
+    return {**found, "usage_metadata": columns}
 
 
 def _wrap(key: str, value: Any) -> dict[str, Any]:
