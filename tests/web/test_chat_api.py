@@ -322,7 +322,7 @@ def test_run_list_reads_no_checkpoint_for_rows_that_cannot_match(wf, monkeypatch
     assert reads["n"] == 0
 
 
-def test_a_run_that_crashed_at_start_is_in_my_cases(wf, monkeypatch):
+def test_a_run_that_crashed_at_start_is_in_my_cases(wf, monkeypatch, tmp_path):
     from secure_rag.boq import boq
     from secure_rag.core.identity import get_user
     from secure_rag.workflow.workflow import RunScope
@@ -330,12 +330,13 @@ def test_a_run_that_crashed_at_start_is_in_my_cases(wf, monkeypatch):
     def broken(runner, state):
         raise RuntimeError("matcher bug")
 
-    monkeypatch.setattr(boq, "match_step", broken)
-    with pytest.raises(RuntimeError):
-        wf.start_boq(get_user("khalid"), ISSUES)
+    # Undo this patch alone: monkeypatch.undo() would also drop the temp data folder.
+    with monkeypatch.context() as patch:
+        patch.setattr(boq, "match_step", broken)
+        with pytest.raises(RuntimeError):
+            wf.start_boq(get_user("khalid"), ISSUES)
     [row] = wf.runs_for(get_user("khalid"), RunScope.MINE)
-    monkeypatch.undo()
-    monkeypatch.setenv("RAG_TODAY", "2026-11-18")
+    assert config.DATA_DIR == tmp_path  # the resume must not hold budget in the real data folder
     assert wf.resume(row.run_id, get_user("khalid")).status.value == "awaiting_procurement"
 
 
