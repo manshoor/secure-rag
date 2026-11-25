@@ -52,6 +52,7 @@ PRICE_INPUT_PER_MTOK = 4.00
 PRICE_OUTPUT_PER_MTOK = 20.00
 TOKENS_PER_MTOK = 1_000_000
 ANSWER_MAX_TOKENS = 4000
+AGENT_TURN_MAX_TOKENS = 8000  # one agent turn, thinking included; the SDK refuses a plain call above about 21,000
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 # Ollama embeddings (optional): used only when RAG_EMBEDDER=ollama.
