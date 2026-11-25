@@ -44,6 +44,9 @@ AGENT_ID = "agent:procurement"
 _POLICY_DOC = "alpha-procurement-policy"
 _UNREADABLE_FILE = "unreadable_file"
 _DUPLICATE = "duplicate"
+_NEEDS_PERSON = "needs a person: "
+# The rule is not known while the run total is zero: the quotes will set it.
+_RULE_FROM_QUOTES = "set by the quote total"
 _UNKNOWN_TOOL = "unknown"  # recorded in place of a tool name the model invented
 
 
@@ -90,6 +93,13 @@ _LIVE = frozenset({PkgStatus.OPEN.value, PkgStatus.SHORT.value})
 _COMPARED = _LIVE | {PkgStatus.WON.value}
 # Package statuses whose lines stay on the RFQ list.
 _UNPRICED = frozenset({PkgStatus.DROPPED.value, PkgStatus.TENDER.value, PkgStatus.NO_VENDORS.value, PkgStatus.NOT_SENT.value})
+# Why a run ends with no priced line. Mixed packages: every reason that applies, in this order.
+_UNPRICED_REASONS = (
+    (PkgStatus.TENDER.value, "the quotes need an open tender"),
+    (PkgStatus.DROPPED.value, "too few valid quotes"),
+    (PkgStatus.NOT_SENT.value, "quote requests refused"),
+    (PkgStatus.NO_VENDORS.value, "no approved vendor in a category"),
+)
 
 
 @dataclass(frozen=True)
@@ -182,6 +192,21 @@ def wants_quotes(state: "WfState", rfq: list[dict], total: Decimal) -> bool:
     if state.get("mode") != "agent" or total > EXECUTIVE_APPROVAL_AED:
         return False
     return bool(_packages(rfq))
+
+
+def unquotable_reason(state: "WfState", rfq: list[dict]) -> str:
+    """Why lines that need quotes cannot go out, or '' (classic mode, no such line, or a package exists)."""
+    if state.get("mode") != "agent" or not rfq or _packages(rfq):
+        return ""
+    return f"{_NEEDS_PERSON}no line can go out for quotes: {_unquoted_causes(rfq)}"
+
+
+def _unquoted_causes(rfq: list[dict]) -> str:
+    """Each cause that keeps lines out of every package, with its line count: '2 with an unknown unit'."""
+    no_unit = sum(not line.get("unit") for line in rfq)
+    no_category = sum(bool(line.get("unit")) and not line_category(line["description"]) for line in rfq)
+    counted = ((no_unit, "with an unknown unit"), (no_category, "in no vendor category"))
+    return ", ".join(f"{count} {cause}" for count, cause in counted if count)
 
 
 def start_stage(state: "WfState", lines: list[dict], total: Decimal, rfq: list[dict]) -> "WfState":
@@ -310,7 +335,7 @@ def _needs_person(state: "WfState", agent: dict, reason: str, row: dict | None, 
     from .workflow import _stop
 
     steps = state["agent_steps"] + ([{"status": StepOutcome.STOPPED.value, "result": {}, **row}] if row else [])
-    stop = _stop(state, "agent", f"needs a person: {reason}", {"steps": agent["steps"]})
+    stop = _stop(state, "agent", f"{_NEEDS_PERSON}{reason}", {"steps": agent["steps"]})
     return {**base, **stop, "agent": agent, "agent_steps": steps}
 
 
@@ -390,8 +415,13 @@ def _policy_rule(runner: "WorkflowRunner", state: "WfState", agent: dict, args: 
     with _trace_scope(state):
         answer = ask(runner._store, runner._composer, agent_user, _policy_question(total, Privacy(state["privacy"]), state["company"]))
     cited = not answer.refused and any(c.doc_id == _POLICY_DOC for c in answer.citations)
-    rule = quotes_required(total)
+    rule = _rule_for(total)
     return {"agent": {**agent, "policy": rule}}, {"rule": rule, "cited": cited}
+
+
+def _rule_for(total: Decimal) -> str:
+    """With nothing priced, AED 0 would read as 'one written quotation': the quotes set the rule."""
+    return quotes_required(total) if total else _RULE_FROM_QUOTES
 
 
 def _pick_vendors(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
@@ -499,7 +529,7 @@ def _finalize(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dic
     review = [line for line in state["review"] if not (line["item_no"] in priced and line["reason"].startswith("RFQ needed"))]
     total = Decimal(agent["catalogue_total"]) + sum((Decimal(line["total"]) for line in added), Decimal("0"))
     update = {"lines": state["lines"] + added, "total": str(money(total)), "rfq": rfq, "review": review, "agent": {**agent, "finalized": True}}
-    return update, {"priced": len(added), "total_aed": str(money(total))}
+    return update, {"priced": len(added), "total_aed": str(money(total)), "rule": _rule_for(total)}
 
 
 def _finish(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
@@ -652,7 +682,16 @@ def quotes_apply(state: "WfState") -> "WfState":
 def hold_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
     """The existing budget hold and procurement-gate preparation, on the run total with quotes."""
     quoted = sum(line.get("code") == "quote" for line in state["lines"])
-    return runner._price_and_precheck(state, "hold", state["lines"], Decimal(state["total"]), [], {"quoted": quoted})
+    lines, total = state["lines"], Decimal(state["total"])
+    return runner._price_and_precheck(state, "hold", lines, total, [], {"quoted": quoted}, f"{_NEEDS_PERSON}{_unpriced_reason(state)}")
+
+
+def _unpriced_reason(state: "WfState") -> str:
+    """Why nothing was priced: every package status that applies, then the lines in no package."""
+    statuses = {package["status"] for package in state["packages"]}
+    reasons = [reason for status, reason in _UNPRICED_REASONS if status in statuses]
+    unquoted = _unquoted_causes(state["rfq"])
+    return "; ".join(reasons + ([f"not sent: {unquoted}"] if unquoted else []))
 
 
 def stale_quotes(state: "WfState") -> list[str]:

@@ -141,6 +141,7 @@ _APPLY_GATES = {
 AGENT_PREFIX = "agent:"
 # Graph steps per invoke; an agent stage runs one planner step per graph step.
 _RECURSION_LIMIT = 200
+_NOTHING_PRICED = "no line could be priced from the catalogue"
 
 
 class WfState(TypedDict, total=False):
@@ -638,7 +639,8 @@ class WorkflowRunner:
     # ---- shared pricing tail ------------------------------------------------------
 
     def _price_and_precheck(
-        self, state: WfState, step: str, lines: list[dict], total: Decimal, refused: list[str], extra: dict | None = None
+        self, state: WfState, step: str, lines: list[dict], total: Decimal, refused: list[str], extra: dict | None = None,
+        nothing_priced: str = _NOTHING_PRICED,
     ) -> WfState:
         """Record the priced lines, hold the budget (or stop short), prepare the procurement gate."""
         roles = sorted(budget_approver_roles(total))
@@ -653,7 +655,7 @@ class WorkflowRunner:
 
         # Nothing priced: nothing to approve (everything is on the RFQ or review list).
         if not lines:
-            return {**update, **_stop(state, step, "no line could be priced from the catalogue", detail)}
+            return {**update, **_stop(state, step, nothing_priced, detail)}
 
         # Hold the total now: nobody is asked to approve what the budget cannot pay,
         # and no other open run can count on the same money.

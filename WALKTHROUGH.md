@@ -11,7 +11,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh     # or: brew install uv
 git clone https://github.com/manshoor/secure-rag.git
 cd secure-rag
 uv sync                                             # add --extra docling to read PDF BOQs
-uv run pytest -q                                    # 462 offline tests, about 40 seconds
+uv run pytest -q                                    # 485 offline tests, about 40 seconds
 uv run rag injection-eval --model hostile           # 8 planted-instruction cases, free
 ```
 
@@ -89,7 +89,7 @@ A step Claude cannot plan (refused, API error, broken reply) goes to fixed rules
 ```sh
 uv run rag injection-eval --model hostile   # fake models that obey planted text: outcomes still hold
 uv run rag workflow-eval                    # 11 workflow cases, offline
-uv run pytest -q                            # 462 offline tests
+uv run pytest -q                            # 485 offline tests
 ```
 
 - Say: "Every case here has a test. Each step writes an audit line and a trace span with ids and amounts, not free text."

@@ -172,3 +172,42 @@ def test_other_company_sees_not_visible(server, browser):
     lina = _window(browser, server, "lina", case=run_id)
     lina.get_by_text("Not found or not visible to you").wait_for()
     assert lina.get_by_text(run_id).count() == 0
+
+
+# ---- nothing priced from the catalogue -----------------------------------------------------------
+
+
+def test_a_case_with_nothing_priced_is_not_shown_as_private(server, browser, tmp_path):
+    boq = tmp_path / "quotes_only.csv"
+    boq.write_text("Item,Description,Unit,Qty\n2.2,Decorative GRC cornice,LM,45\n")
+    khalid = _window(browser, server, "khalid")
+    run_id = _upload(khalid, boq)
+    khalid.get_by_text("Waiting: quote requests").first.wait_for()
+    assert khalid.get_by_text("Private file").count() == 0
+
+    # Refused requests leave nothing to hold; the case says why it stopped.
+    omar = _window(browser, server, "omar")
+    _open_waiting(omar, run_id)
+    omar.get_by_text("Rule: set by the quote total.").wait_for()
+    _click(omar, "Reject")
+    omar.get_by_text("needs a person: quote requests refused").first.wait_for()
+    omar.get_by_text("Nothing held.").wait_for()
+    assert omar.get_by_text("Private file").count() == 0
+    assert khalid.errors == [] and omar.errors == []
+
+
+def test_the_finance_card_shows_the_rule_for_the_quoted_total(server, browser, tmp_path):
+    """4,620.00 + 7,155.00 = 11,775.00: three quotes, never the placeholder from before the quotes."""
+    boq = tmp_path / "quotes_only.csv"
+    boq.write_text("Item,Description,Unit,Qty\n1.4,Glass block feature wall 100mm,m2,12\n2.2,Decorative GRC cornice,LM,45\n")
+    run_id = _upload(_window(browser, server, "khalid"), boq)
+    omar = _window(browser, server, "omar")
+    _open_waiting(omar, run_id)
+    for button in ("Approve sending", "Simulate vendor replies", "Extend once", "Simulate vendor replies", "Approve"):
+        _click(omar, button)
+
+    faisal = _window(browser, server, "faisal")
+    _open_waiting(faisal, run_id)
+    faisal.get_by_role("button", name="Approve AED 11,775.00").wait_for()
+    faisal.get_by_text("Rule: three written quotations.").wait_for()
+    assert faisal.get_by_text("Rule: set by the quote total.").count() == 0

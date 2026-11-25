@@ -91,6 +91,9 @@ function stepWords(step) {
     case "gate_quotes":
       return step.status === "waiting" ? ["Too few valid quotes", `Waiting on ${list(d.roles || ["procurement"])}.`] : ["Quote decision", `${decided}.`];
     case "hold":
+      if (step.status === "stopped") {
+        return ["Hold the budget", "Nothing held."];
+      }
       return ["Hold the budget", `AED ${money(d.total_aed)} held for ${plural(d.lines ?? 0, "line")}.`];
     case "gate_procurement":
       return step.status === "waiting" ? ["Procurement approval", `Waiting on ${list(d.roles || ["procurement"])}.`] : ["Procurement approval", `${decided}.`];
@@ -333,7 +336,9 @@ function gateButtons(view, ctx, choices) {
 }
 
 function policyNote(view) {
-  const rule = (view.agent_steps || []).find((step) => step.tool === "policy_rule")?.result?.rule;
+  // Once quotes set the total, its rule replaces the one read before they arrived.
+  const ruleOf = (tool) => (view.agent_steps || []).find((step) => step.tool === tool && step.result?.rule)?.result.rule;
+  const rule = ruleOf("finalize_pricing") || ruleOf("policy_rule");
   const cited = view.policy?.visible ? `${view.policy.title} › ${view.policy.section}` : "";
   if (!rule && !cited) {
     return null;

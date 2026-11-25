@@ -248,7 +248,11 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
         update = procurement_agent.start_stage(state, lines, total, rfq)
         return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}
 
-    update = runner._price_and_precheck(state, "boq_price", lines, total, [], {"priced": len(lines), "rfq": len(rfq), "review": len(review)})
+    # With nothing priced, agent mode says why its lines cannot go out for quotes.
+    counts = {"priced": len(lines), "rfq": len(rfq), "review": len(review)}
+    reason = procurement_agent.unquotable_reason(state, rfq)
+    why = {"nothing_priced": reason} if reason else {}
+    update = runner._price_and_precheck(state, "boq_price", lines, total, [], counts, **why)
     # The raw lines are not needed after pricing; drop them from the checkpoint.
     return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}
 

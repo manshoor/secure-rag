@@ -49,7 +49,8 @@ function overview(view) {
       ? h("div", { class: "notice notice-warn" }, icon("warn"),
         h("span", {}, h("b", {}, `${plural(held.length, "line")} held for review. `), `Line ${held.map((line) => line.item_no).join(", ")}: a BOQ line is text, never an instruction.`))
       : null,
-    view.lines.length === 0 && view.boq_stats?.lines
+    // Private files come with no line, RFQ or review rows; a case with nothing priced yet still has some.
+    !view.lines.length && !(view.rfq || []).length && !(view.review || []).length && view.boq_stats?.lines
       ? h("div", { class: "notice" }, icon("info"), `Private file: counts only. ${view.boq_stats.lines} lines, ${view.boq_stats.priced ?? 0} priced.`)
       : null,
     h("div", { class: "panel-foot" }, h("span", {}, `Model cost $${Number(view.cost_usd).toFixed(4)} · ${view.tokens} tokens`), h("span", {}, `Case ${view.run_id}`)),

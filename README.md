@@ -84,8 +84,8 @@ Needs [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
-uv run pytest -q                 # 462 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
-uv run playwright install chromium   # once, about 100 MB: the 4 browser tests (-m ui) skip without it
+uv run pytest -q                 # 485 offline tests, about 40 seconds; 15 Postgres/Qdrant tests skip
+uv run playwright install chromium   # once, about 100 MB: the 6 browser tests (-m ui) skip without it
 uv run rag users                 # sample users, companies, roles
 uv run rag ingest                # chunks indexed and quarantined
 uv run rag ask --user sara "How many leave days can I carry over?"
@@ -162,6 +162,8 @@ uv run rag injection-eval --model hostile                        # same, with fa
 The injection eval runs offline whatever `RAG_LLM` says, with tracing off, and refuses to run while `DATABASE_URL` is set.
 
 Agent mode adds quote requests under the three-quote rule. The procurement agent picks approved vendors and drafts one request each; procurement approves sending; replies are checked by code (arithmetic, units, sender, validity); too few valid quotes go back to procurement to extend once or drop the lines; the lowest valid quote per package joins the total; then the same two gates, and one purchase order per vendor.
+
+A BOQ with no catalogue-priced line still goes out for quotes in agent mode, if at least one line belongs to a category with an approved vendor; the winning quotes are then the whole total. If no line can go out, or the requests are refused, the quotes fall short or they reach the open-tender band, the run stops for a person and names every cause. Classic mode has no quote path: with nothing priced it stops.
 
 Who picks each step: offline, fixed rules take the first tool code allows. With `RAG_LLM=claude`, Claude picks the step from the same list; it sees ids, counts, amounts and statuses, never line or file text. Code authorizes every step, and the timeline shows code's fixed reason for each tool, never model words. A refused pick, a repeated pick with nothing changed, a refusal, an API error or a broken reply hands that step to the rules, marked "fallback"; three refused picks between two pauses stop the run for a person. A refused pick is recorded as `unknown` with no arguments, so model wording never reaches the timeline, audit or traces. Private BOQs never reach Claude.
 
@@ -356,7 +358,7 @@ All companies, people, documents, vendors, prices and BOQs are invented.
 - Workflow systems are JSON files read through `systems.py`. Production swaps `find_hires`, `price_items` and the budget functions for HR and ERP APIs, and the outbox for real purchase orders and tickets. Budget holds live in `data/runtime/budget_ledger.json` (a stand-in for ERP commitments): pricing holds the total, a rejection or stop releases it, execute turns it into spend. A run left waiting at a gate keeps its hold; there is no expiry. A failure after the hold releases it; a hard kill leaves the hold, and `rag workflow resume` finishes the run. A spent run always reaches its purchase order on resume. The ledger is one file per `RAG_DATA_DIR`: processes that share Postgres checkpoints must also share that folder (production keeps holds in the ERP). Still open: the same hires can be equipped by two runs, and an order split into two runs under AED 100,000 each never reaches the executive. Production records ordered (hire, item) pairs in the ERP.
 - The approval matrix is `policy.py`, from the invented procurement policy. The policy names no approver below AED 10,000, so finance approves there too. A real matrix comes from finance.
 - Request reading offline is regex-based: it knows the request shapes in the tests and refuses unknown items rather than guessing.
-- BOQ matching is term overlap against a small catalogue (threshold 0.8, sizes and units must agree). A line is not priced when it names a word that sets a sibling item apart ("solid" vs "hollow"), when two items tie, when it describes removal or excluded work, or when its quantity is not a plain number. Unmatched or weak lines go to RFQ, never priced. In Claude mode a model suggestion only adds a hint to the RFQ entry. A real rate card and a review of the threshold on real BOQs come first.
+- BOQ matching is term overlap against a small catalogue (threshold 0.8, sizes and units must agree). A line is not priced when it names a word that sets a sibling item apart ("solid" vs "hollow"), when two items tie, when it describes removal or excluded work, or when its quantity is not a plain number. Unmatched or weak lines go to RFQ, never priced. Agent mode can quote only lines in a vendor category (`glass_block` and `grc` today, by words in the description); other RFQ lines stay on the list. In Claude mode a model suggestion only adds a hint to the RFQ entry. A real rate card and a review of the threshold on real BOQs come first.
 - Rate and amount columns in a BOQ are ignored; prices come only from the catalogue.
 - The `/ui` page uses the `X-User` header like the rest of the API: local use only. A file uploaded through it runs as a normal (not counts-only) run, even if it came from `data/private/`; use the CLI for private files.
 - Run checkpoints keep the priced, RFQ and review lines with their descriptions (counts-only runs included), on the local disk or in Postgres. Raw parsed lines are dropped after pricing.
