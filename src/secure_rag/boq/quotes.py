@@ -46,6 +46,7 @@ class Problem(str, Enum):
     MISSING_LINE = "missing_line"
     UNIT = "unit_differs"
     DUPLICATE_LINE = "duplicate_line"
+    ZERO_AMOUNT = "amount_rounds_to_zero"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,8 @@ def check_quote(quote: Quote, sender_id: str, rfq: Rfq, today: date) -> QuoteChe
             problems.append(Problem.QUANTITY)
         if money(line.quantity * line.unit_price) != money(line.amount):
             problems.append(Problem.ARITHMETIC)
+        if not money(line.amount):
+            problems.append(Problem.ZERO_AMOUNT)
         total += money(line.amount)
     if set(rfq.lines) - quoted:
         problems.append(Problem.MISSING_LINE)

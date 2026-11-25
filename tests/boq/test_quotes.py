@@ -209,3 +209,22 @@ def test_header_text_that_breaks_a_field_limit_is_a_parse_error(tmp_path):
     path.write_text("\n".join([*block, "Item,Description,Unit,Qty,Unit price,Amount", "1.4,Glass,m2,12,410.00,4920.00"]) + "\n", encoding="utf-8")
     with pytest.raises(BoqParseError):
         parse_quote(path)
+
+
+@pytest.mark.parametrize("price", ["0.001", "0.0049"])
+def test_quote_under_one_fils_is_invalid(tmp_path, price):
+    """It would round to AED 0.00 and be ordered for nothing."""
+    rfq = Rfq("glass_block", {"1.4": Decimal("1")}, GLASS.vendor_ids)
+    check = _check(_write(tmp_path, [f"1.4,Glass block,m2,1,{price},{price}"]), rfq)
+    assert check.problems == (Problem.ZERO_AMOUNT,)
+
+
+def test_one_zero_line_spoils_a_quote_with_a_real_total(tmp_path):
+    rfq = Rfq("glass_block", {"1.4": Decimal("1"), "1.5": Decimal("1")}, GLASS.vendor_ids)
+    check = _check(_write(tmp_path, ["1.4,Glass block,m2,1,0.001,0.001", "1.5,Glass block,m2,1,50,50"]), rfq)
+    assert check.problems == (Problem.ZERO_AMOUNT,)
+
+
+def test_quote_of_half_a_fils_rounds_up_and_is_valid(tmp_path):
+    rfq = Rfq("glass_block", {"1.4": Decimal("1")}, GLASS.vendor_ids)
+    assert _check(_write(tmp_path, ["1.4,Glass block,m2,1,0.005,0.005"]), rfq).valid

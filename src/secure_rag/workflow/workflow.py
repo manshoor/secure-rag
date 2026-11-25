@@ -142,6 +142,7 @@ AGENT_PREFIX = "agent:"
 # Graph steps per invoke; an agent stage runs one planner step per graph step.
 _RECURSION_LIMIT = 200
 _NOTHING_PRICED = "no line could be priced from the catalogue"
+_ZERO_TOTAL = "the run total is AED 0.00"
 
 
 class WfState(TypedDict, total=False):
@@ -656,6 +657,8 @@ class WorkflowRunner:
         # Nothing priced: nothing to approve (everything is on the RFQ or review list).
         if not lines:
             return {**update, **_stop(state, step, nothing_priced, detail)}
+        if not total:
+            return {**update, **_stop(state, step, _ZERO_TOTAL, detail)}
 
         # Hold the total now: nobody is asked to approve what the budget cannot pay,
         # and no other open run can count on the same money.

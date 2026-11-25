@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from . import systems
 from ..core import audit, config, tracing
 from ..rag.answer import ask
+from ..boq.boq import REPEATED_ITEM, ZERO_LINE
 from ..boq.boq_parser import parse_quote
 from ..core.identity import User
 from ..core.llm import ClaudeClient, ModelRefused, ModelUnavailable, Usage
@@ -194,18 +195,31 @@ def wants_quotes(state: "WfState", rfq: list[dict], total: Decimal) -> bool:
     return bool(_packages(rfq))
 
 
-def unquotable_reason(state: "WfState", rfq: list[dict]) -> str:
+def asked_items(rfq: list[dict]) -> set[str]:
+    """Item numbers that would be in a quote request."""
+    return {item for package in _packages(rfq) for item in package["items"]}
+
+
+def unquotable_reason(state: "WfState", rfq: list[dict], review: list[dict]) -> str:
     """Why lines that need quotes cannot go out, or '' (classic mode, no such line, or a package exists)."""
-    if state.get("mode") != "agent" or not rfq or _packages(rfq):
+    if state.get("mode") != "agent" or _packages(rfq):
         return ""
-    return f"{_NEEDS_PERSON}no line can go out for quotes: {_unquoted_causes(rfq)}"
+    if not rfq and not any(line["reason"].startswith(REPEATED_ITEM) for line in review):
+        return ""
+    return f"{_NEEDS_PERSON}no line can go out for quotes: {_unquoted_causes(rfq, review)}"
 
 
-def _unquoted_causes(rfq: list[dict]) -> str:
+def _unquoted_causes(rfq: list[dict], review: list[dict]) -> str:
     """Each cause that keeps lines out of every package, with its line count: '2 with an unknown unit'."""
+    held = [line["reason"] for line in review if line["reason"].endswith("; not priced")]
     no_unit = sum(not line.get("unit") for line in rfq)
     no_category = sum(bool(line.get("unit")) and not line_category(line["description"]) for line in rfq)
-    counted = ((no_unit, "with an unknown unit"), (no_category, "in no vendor category"))
+    repeated = sum(reason.startswith(REPEATED_ITEM) for reason in held)
+    zero = sum(reason.startswith(ZERO_LINE) for reason in held)
+    counted = (
+        (no_unit, "with an unknown unit"), (no_category, "in no vendor category"), (repeated, f"with a {REPEATED_ITEM}"),
+        (zero, "that rounds to AED 0.00"), (len(held) - repeated - zero, "held for another reason"),
+    )
     return ", ".join(f"{count} {cause}" for count, cause in counted if count)
 
 
@@ -690,7 +704,7 @@ def _unpriced_reason(state: "WfState") -> str:
     """Why nothing was priced: every package status that applies, then the lines in no package."""
     statuses = {package["status"] for package in state["packages"]}
     reasons = [reason for status, reason in _UNPRICED_REASONS if status in statuses]
-    unquoted = _unquoted_causes(state["rfq"])
+    unquoted = _unquoted_causes(state["rfq"], state.get("review", []))
     return "; ".join(reasons + ([f"not sent: {unquoted}"] if unquoted else []))
 
 

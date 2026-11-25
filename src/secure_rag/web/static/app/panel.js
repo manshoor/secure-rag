@@ -1,6 +1,6 @@
 // The case panel: Overview, Lines, Quotes, Policy and Activity tabs for the open case.
 
-import { comparisonTable, heldLines, stageOf, statusWords, waitingRoles } from "./case.js";
+import { comparisonTable, heldLines, otherHeld, stageOf, statusWords, waitingRoles } from "./case.js";
 import { fill, h, icon, money, plural, status } from "./dom.js";
 
 const STAGES = ["Projects", "Procurement", "Finance", "Done"];
@@ -58,7 +58,7 @@ function overview(view) {
 }
 
 function lines(view) {
-  if (!view.lines.length && !(view.rfq || []).length) {
+  if (!view.lines.length && !(view.rfq || []).length && !(view.review || []).length) {
     return [h("p", { class: "empty" }, "No line details to show.")];
   }
   const qty = (line) => `${line.quantity ?? ""} ${line.unit ?? ""}`.trim();
@@ -75,7 +75,7 @@ function lines(view) {
           h("td", { class: "num" }, qty(line)),
           h("td", { class: "num" }, money(line.total))))))),
     listOf("Need quotes", view.rfq || []),
-    listOf("Held for review", heldLines(view)),
+    listOf("Held for review", [...heldLines(view), ...otherHeld(view)]),
   ];
 }
 

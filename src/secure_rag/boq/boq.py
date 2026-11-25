@@ -18,6 +18,7 @@ or excluded work, or when its quantity is not a plain number.
 
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
 MATCH_THRESHOLD = 0.8
 # Lines above this value are priced but procurement must look at them (AED).
 HIGH_VALUE_LINE_AED = Decimal("30000")
+
+# Agent mode: a quote names its line by item number, so lines that share one cannot be told apart.
+REPEATED_ITEM = "repeated item number"
+_RFQ_NEEDED = "RFQ needed"
+ZERO_LINE = "line total rounds to AED 0.00"
 
 # Unit spellings seen in BOQs -> canonical unit.
 _UNITS = {
@@ -214,6 +220,7 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
     review: list[dict] = []
     rfq: list[dict] = []
     sections: dict[str, Decimal] = {}
+    flags = list(state["flags"])
     for line in state["boq_raw"]:
         keep = {key: line[key] for key in ("item_no", "section", "description", "quantity", "unit_raw", "unit")}
         if line.get("suggested_code"):
@@ -228,10 +235,13 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
         if line["status"] != LineStatus.MATCHED.value:
             reason = _weak_reason(line)
             rfq.append({**keep, "reason": reason})
-            review.append({**keep, "reason": f"RFQ needed: {reason}"})
+            review.append({**keep, "reason": f"{_RFQ_NEEDED}: {reason}"})
             continue
 
         priced = systems.price_items({line["code"]: Decimal(line["quantity"])})[0]
+        if not priced.total:
+            review.append({**keep, "reason": f"{ZERO_LINE}; not priced"})
+            continue
         row = _line_row(priced, item_no=line["item_no"], section=line["section"], boq_description=line["description"], score=line["score"])
         lines.append(row)
         sections[line["section"]] = sections.get(line["section"], Decimal("0")) + priced.total
@@ -239,22 +249,43 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
             review.append({**keep, "code": priced.code, "total": str(priced.total), "reason": f"high value line (over AED {HIGH_VALUE_LINE_AED:,})"})
 
     total = sum((Decimal(line["total"]) for line in lines), Decimal("0.00"))
-    stats = {"lines": len(state["boq_raw"]), "priced": len(lines), "rfq": len(rfq), "review": len(review), "sections": {name: str(value) for name, value in sections.items()}}
 
-    # Agent mode with lines to quote: no hold yet; the quote loop runs first.
+    # Going out for quotes: a quote for a repeated number could be for either line, so a person sorts them out.
     from ..workflow import procurement_agent
 
     if procurement_agent.wants_quotes(state, rfq, total):
+        rfq, review, repeats = _hold_repeats(rfq, review, procurement_agent.asked_items(rfq))
+        flags += repeats
+    stats = {"lines": len(state["boq_raw"]), "priced": len(lines), "rfq": len(rfq), "review": len(review), "sections": {name: str(value) for name, value in sections.items()}}
+
+    # Agent mode with lines to quote: no hold yet; the quote loop runs first.
+    if procurement_agent.wants_quotes(state, rfq, total):
         update = procurement_agent.start_stage(state, lines, total, rfq)
-        return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}
+        return {**update, "rfq": rfq, "review": review, "flags": flags, "boq_stats": stats, "boq_raw": []}
 
     # With nothing priced, agent mode says why its lines cannot go out for quotes.
     counts = {"priced": len(lines), "rfq": len(rfq), "review": len(review)}
-    reason = procurement_agent.unquotable_reason(state, rfq)
+    reason = procurement_agent.unquotable_reason(state, rfq, review)
     why = {"nothing_priced": reason} if reason else {}
     update = runner._price_and_precheck(state, "boq_price", lines, total, [], counts, **why)
     # The raw lines are not needed after pricing; drop them from the checkpoint.
-    return {**update, "rfq": rfq, "review": review, "boq_stats": stats, "boq_raw": []}
+    return {**update, "rfq": rfq, "review": review, "flags": flags, "boq_stats": stats, "boq_raw": []}
+
+
+def _hold_repeats(rfq: list[dict], review: list[dict], asked: set[str]) -> tuple[list[dict], list[dict], list[str]]:
+    """Move lines that share an item number vendors would be asked for from the RFQ list to review, with flags.
+
+    Only numbers in `asked` can be mixed up; other repeats stay on the RFQ list. Blank numbers count as one.
+    """
+    counts = Counter(line["item_no"] for line in rfq)
+    repeated = {number for number in asked if counts[number] > 1}
+    held = [
+        {**line, "reason": f"{REPEATED_ITEM}; not priced"}
+        if line["item_no"] in repeated and line["reason"].startswith(_RFQ_NEEDED) else line
+        for line in review
+    ]
+    flags = [f"{line['item_no'] or 'no number'}: {REPEATED_ITEM}" for line in rfq if line["item_no"] in repeated]
+    return [line for line in rfq if line["item_no"] not in repeated], held, flags
 
 
 def _weak_reason(line: dict) -> str:

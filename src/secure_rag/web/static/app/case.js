@@ -169,6 +169,11 @@ export function heldLines(view) {
   return (view.review || []).filter((line) => String(line.reason).startsWith("possible injection"));
 }
 
+/** Lines held for any other reason, such as a repeated item number: not priced, not sent to vendors. */
+export function otherHeld(view) {
+  return (view.review || []).filter((line) => String(line.reason).endsWith("; not priced") && !heldLines(view).includes(line));
+}
+
 function timelineRow(row, isNew) {
   const cls = `step${isNew ? " step-new" : ""}`;
   if (row.agent) {
@@ -430,6 +435,12 @@ function ordersCard(view) {
  */
 export function caseCards(view, seen, ctx) {
   const cards = [caseCard(view, seen, ctx)];
+  const other = otherHeld(view);
+  if (other.length) {
+    cards.push(h("div", { class: "notice notice-warn" }, icon("warn"),
+      h("span", {}, h("b", {}, `${plural(other.length, "line")} held for review and not in this order. `),
+        other.map((line) => `${line.item_no || "no number"}: ${line.reason.replace("; not priced", "")}`).join("; "))));
+  }
   if ((view.quotes || []).length) {
     cards.push(quotesCard(view));
   }

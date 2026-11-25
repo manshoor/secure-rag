@@ -6,6 +6,7 @@ Hand-computed from data/samples/quotes: glass block 4,620.00 (round 1) + GRC cor
 
 import json
 import time
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -223,6 +224,126 @@ def test_quotes_in_the_tender_band_stop_with_that_reason(wf, tmp_path):
     run = wf.deliver(run_id, Event.QUOTES_DELIVERED, get_user("omar"), quotes)
     assert run.status is WfStatus.STOPPED and run.reason == "needs a person: the quotes need an open tender"
     assert not _outbox("purchase_order")
+
+
+# ---- repeated item numbers: a quote names its line by item number -----------------------------
+
+REPEATED = "repeated item number; not priced"
+GLASS_14 = "1.4,Glass block feature wall 100mm,m2,12\n"
+
+
+@pytest.mark.parametrize(
+    "repeated",
+    [
+        "2.2,Decorative GRC cornice,LM,45\n2.2,Decorative GRC panel,LM,10\n",
+        "2.2,Decorative GRC cornice,LM,45\n2.2,Glass block screen,m2,3\n",  # two packages
+        "2.2,Decorative GRC cornice,LM,45\n2.2,Bronze door handle,nos,3\n",  # one line in no package
+        ",Decorative GRC cornice,LM,45\n,Decorative GRC panel,LM,10\n",  # no number at all
+    ],
+)
+def test_lines_sharing_a_number_are_held_and_never_sent(wf, tmp_path, repeated):
+    run = _start(wf, tmp_path, GLASS_14 + repeated)
+    assert run.status is WfStatus.AWAITING_RFQ
+    assert [(p["id"], p["items"]) for p in run.packages] == [("glass_block", ["1.4"])]
+    assert [line["item_no"] for line in run.rfq] == ["1.4"]
+    assert [line["reason"] for line in run.review].count(REPEATED) == 2
+    assert sum("repeated item number" in flag for flag in run.flags) == 2
+
+    wf.decide(run.run_id, get_user("omar"), Decision.APPROVE, Gate.RFQ)
+    assert {row["item_no"] for record in _outbox("rfq") for row in record["lines"]} == {"1.4"}
+
+
+def test_held_repeats_stay_for_review_when_the_order_is_written(wf, tmp_path):
+    rows = GLASS_14 + "2.2,Decorative GRC cornice,LM,45\n2.2,Decorative GRC panel,LM,10\n"
+    run_id = _start(wf, tmp_path, rows).run_id
+    wf.decide(run_id, get_user("omar"), Decision.APPROVE, Gate.RFQ)
+    wf.deliver(run_id, Event.QUOTES_DELIVERED, get_user("omar"), [q for q in ROUND1 if q[0].startswith("V-GLB")])
+    wf.decide(run_id, get_user("omar"), Decision.APPROVE, Gate.PROCUREMENT)
+    run = wf.decide(run_id, get_user("faisal"), Decision.APPROVE, Gate.FINANCE)
+    assert run.status is WfStatus.DONE and run.total == Decimal("4620.00")
+    assert [line["quantity"] for line in run.review if line["reason"] == REPEATED] == ["45", "10"]
+
+
+def test_only_repeated_lines_stop_and_say_so(wf, tmp_path):
+    run = _start(wf, tmp_path, "2.2,Decorative GRC cornice,LM,45\n2.2,Decorative GRC panel,LM,10\n")
+    assert run.status is WfStatus.STOPPED
+    assert run.reason == CANNOT_GO_OUT + "2 with a repeated item number"
+
+
+GRC_TWICE = "2.2,Decorative GRC cornice,LM,45\n2.2,Decorative GRC panel,LM,10\n"
+
+
+@pytest.mark.parametrize(
+    "mode, rows",
+    [
+        (RunMode.CLASSIC, "1,Hollow concrete block wall 200mm thick,m2,10\n" + GRC_TWICE),
+        (RunMode.AGENT, "1,Hollow concrete block wall 200mm thick,m2,2000\n" + GRC_TWICE),  # 136,000: open tender
+    ],
+)
+def test_repeats_stay_on_the_rfq_list_when_no_quote_is_asked_for(wf, tmp_path, mode, rows):
+    run = _start(wf, tmp_path, rows, mode)
+    assert run.status is WfStatus.AWAITING_PROCUREMENT
+    assert [line["quantity"] for line in run.rfq] == ["45", "10"]
+    assert run.flags == [] and all(line["reason"] != REPEATED for line in run.review)
+
+
+def test_the_order_counts_repeats_that_stayed_on_the_rfq_list(wf, tmp_path):
+    run_id = _start(wf, tmp_path, "1,Hollow concrete block wall 200mm thick,m2,2000\n" + GRC_TWICE).run_id
+    wf.decide(run_id, get_user("omar"), Decision.APPROVE, Gate.PROCUREMENT)
+    run = wf.decide(run_id, get_user("noura"), Decision.APPROVE, Gate.FINANCE)
+    assert run.status is WfStatus.DONE and [order["rfq_lines"] for order in _outbox("purchase_order")] == [2]
+
+
+def test_repeats_outside_every_package_stay_on_the_rfq_list(wf, tmp_path):
+    """No quote names 3, so nothing can be mixed up: only the GRC lines are held."""
+    handles = "3,Bronze door handle,nos,4\n3,Teak bench seat,nos,6\n"
+    run_id = _start(wf, tmp_path, GLASS_14 + GRC_TWICE + handles).run_id
+    wf.decide(run_id, get_user("omar"), Decision.APPROVE, Gate.RFQ)
+    run = wf.deliver(run_id, Event.QUOTES_DELIVERED, get_user("omar"), [q for q in ROUND1 if q[0].startswith("V-GLB")])
+    assert run.total == Decimal("4620.00")
+    assert [line["quantity"] for line in run.rfq] == ["4", "6"]
+    assert [line["item_no"] for line in run.review if line["reason"] == REPEATED] == ["2.2", "2.2"]
+
+
+def test_the_stop_reason_counts_held_lines_too(wf, tmp_path):
+    zero = "1,Hollow concrete block wall 200mm thick,m2,0.00005\n"
+    removal = "4,Demolish glass block wall,m2,12\n"
+    run = _start(wf, tmp_path, zero + GRC_TWICE + removal)
+    assert run.reason == CANNOT_GO_OUT + "2 with a repeated item number, 1 that rounds to AED 0.00, 1 held for another reason"
+
+
+@pytest.mark.parametrize("mode", [RunMode.CLASSIC, RunMode.AGENT])
+def test_catalogue_lines_sharing_a_number_are_all_priced_once(wf, tmp_path, mode):
+    rows = "1,Hollow concrete block wall 200mm thick,m2,10\n1,Hollow concrete block wall 200mm thick,m2,5\n"
+    run = _start(wf, tmp_path, rows, mode)
+    assert [line["quantity"] for line in run.lines] == ["10", "5"] and run.total == Decimal("1020.00")
+
+
+def test_a_catalogue_line_and_a_quote_line_may_share_a_number(wf, tmp_path):
+    """Only quote lines are found by number, so neither line is lost or doubled."""
+    rows = "1.4,Hollow concrete block wall 200mm thick,m2,10\n" + GLASS_14
+    run_id = _start(wf, tmp_path, rows).run_id
+    wf.decide(run_id, get_user("omar"), Decision.APPROVE, Gate.RFQ)
+    run = wf.deliver(run_id, Event.QUOTES_DELIVERED, get_user("omar"), [q for q in ROUND1 if q[0].startswith("V-GLB")])
+    assert run.total == Decimal("5300.00") and len(run.lines) == 2 and run.rfq == []
+
+
+# ---- amounts under one fils ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", [RunMode.CLASSIC, RunMode.AGENT])
+def test_a_catalogue_line_that_rounds_to_zero_is_held(wf, tmp_path, mode):
+    run = _start(wf, tmp_path, "1,Hollow concrete block wall 200mm thick,m2,0.00005\n", mode)
+    assert run.status is WfStatus.STOPPED and run.lines == []
+    assert [line["reason"] for line in run.review] == ["line total rounds to AED 0.00; not priced"]
+
+
+def test_a_run_total_of_zero_is_never_held_or_approved(wf, monkeypatch):
+    real = systems.price_items
+    monkeypatch.setattr(systems, "price_items", lambda q: [replace(line, total=Decimal("0.00")) for line in real(q)])
+    run = wf.start_request(get_user("sara"), "3 site engineers join on 2026-12-01. Order laptops.")
+    assert run.status is WfStatus.STOPPED and run.reason == "the run total is AED 0.00"
+    assert not (config.DATA_DIR / "budget_ledger.json").exists()
 
 
 # ---- scale ---------------------------------------------------------------------------------

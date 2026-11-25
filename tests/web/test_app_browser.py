@@ -211,3 +211,13 @@ def test_the_finance_card_shows_the_rule_for_the_quoted_total(server, browser, t
     faisal.get_by_role("button", name="Approve AED 11,775.00").wait_for()
     faisal.get_by_text("Rule: three written quotations.").wait_for()
     assert faisal.get_by_text("Rule: set by the quote total.").count() == 0
+
+
+def test_held_repeated_lines_show_on_the_case(server, browser, tmp_path):
+    boq = tmp_path / "repeated.csv"
+    boq.write_text("Item,Description,Unit,Qty\n1.4,Glass block feature wall 100mm,m2,12\n2.2,Decorative GRC cornice,LM,45\n2.2,Decorative GRC panel,LM,10\n")
+    khalid = _window(browser, server, "khalid")
+    _upload(khalid, boq)
+    khalid.get_by_text("2 lines held for review and not in this order.").wait_for()
+    khalid.get_by_text("2.2: repeated item number").first.wait_for()
+    assert khalid.errors == []
