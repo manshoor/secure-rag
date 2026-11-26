@@ -162,6 +162,14 @@ def content(value: Any) -> Any:
     return value if mode is TraceContent.FULL else None
 
 
+def in_counts_only() -> bool:
+    """True inside counts_only(): the code running is part of a private run.
+
+    Only in the same thread or a copied context: a plain new thread starts outside it.
+    """
+    return _counts_only.get()
+
+
 @contextmanager
 def counts_only() -> Iterator[None]:
     """No text in traces opened inside, for a private run."""

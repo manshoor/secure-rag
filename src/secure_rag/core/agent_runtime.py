@@ -1,7 +1,7 @@
 """One tool-use loop for every agent. The model asks; code decides, runs and counts.
 
     run_agent
-      ├─ private run? ───────────────► end, no model call
+      ├─ private run or counts_only? ─► end, no model call
       └─ turn: limits ─► model ─┬─► refusal, failure, odd reply ─► end, history kept
            ▲                    ├─► finish alone ─► output schema ─► end
            │                    └─► each call, in order:
@@ -30,6 +30,7 @@ from typing import Any, Protocol
 from . import llm, tracing
 from .config import AGENT_TURN_MAX_TOKENS, PRICE_INPUT_PER_MTOK, PRICE_OUTPUT_PER_MTOK, TOKENS_PER_MTOK
 from .llm import ModelRefused, ToolCall, ToolTurn, Usage
+from .textcheck import looks_injected, numbers_in
 
 _FINISH_TOOL = "finish"  # reserved: its arguments are the final result
 _FINISH_PURPOSE = "Give the final result. Call it alone, after you have seen every tool result."
@@ -203,6 +204,42 @@ class _TurnClient(Protocol):
 
 _Authorize = Callable[[str, str, dict], bool]
 
+_SCRIPT_ID = "scripted"  # prefix of the call ids a script makes up
+
+
+class ScriptedClient:
+    """An offline stand-in for the model: it replays given turns through the real loop.
+
+    Every turn costs nothing (zero usage, whatever the turn says). When the
+    script runs out, the next turn ends with no call, so the run ends as
+    BROKEN_RESULT. Code wrote the script, so its output is still checked like any other.
+
+    Single use: a second run on the same instance finds the script spent. The
+    plain constructor does not copy the turns' call arguments; from_steps does.
+    """
+
+    def __init__(self, turns: list[ToolTurn]) -> None:
+        self._turns = list(turns)
+
+    @classmethod
+    def from_steps(cls, steps: list[list[tuple[str, dict]]], output: dict) -> "ScriptedClient":
+        """One turn per step of (tool, arguments) calls, then a turn that finishes with output."""
+        turns = [_scripted_turn(n, calls) for n, calls in enumerate(steps)]
+        return cls([*turns, _scripted_turn(len(steps), [(_FINISH_TOOL, output)])])
+
+    def tool_turn(self, system: str, messages: list[dict], tools: list[dict], max_tokens: int) -> ToolTurn:
+        if not self._turns:
+            return ToolTurn("", (), _STOP_END, Usage(), ())
+        turn = self._turns.pop(0)
+        return ToolTurn(turn.text, turn.calls, turn.stop_reason, Usage(), turn.echo)
+
+
+def _scripted_turn(step: int, calls: list[tuple[str, dict]]) -> ToolTurn:
+    """A tool-use turn with its echo, as the API would send it."""
+    named = tuple(ToolCall(f"{_SCRIPT_ID}_{step}_{n}", name, copy.deepcopy(args)) for n, (name, args) in enumerate(calls))
+    echo = tuple({"type": "tool_use", "id": call.id, "name": call.name, "input": copy.deepcopy(call.arguments)} for call in named)
+    return ToolTurn("", named, _STOP_TOOLS, Usage(), echo)
+
 
 def run_agent(
     spec: AgentSpec, task_facts: dict, authorize: _Authorize, client: _TurnClient, *, privacy: RunPrivacy, case_id: str | None = None
@@ -210,9 +247,11 @@ def run_agent(
     """Run one agent until it finishes, fails or meets a limit. The result always keeps what ran.
 
     authorize(agent, tool, args) must return exactly True to allow a call.
-    A private run never touches the client.
+    A private run never touches the client. Inside tracing.counts_only() every run is
+    private, in the same thread or a copied context only: a plain new thread starts
+    outside it, so callers also pass PRIVATE themselves.
     """
-    if privacy is not RunPrivacy.OPEN:
+    if privacy is not RunPrivacy.OPEN or tracing.in_counts_only():
         return AgentResult(spec.name, EndReason.PRIVATE)
 
     # The case id joins this run's spans to the case's other traces.
@@ -483,6 +522,21 @@ def _error_name(error: Exception) -> str:
 # ---- text -----------------------------------------------------------------------------------------
 
 
+def screen_model_text(text: str, task_facts: dict, result: AgentResult) -> str:
+    """Other free model text from a run (such as a reason in the output), screened like its reasoning.
+
+    The facts are the run's own: the task facts and the facts of every call that ran.
+    Any failure, or text that is not a string, gives ''.
+    """
+    try:
+        if not isinstance(text, str):
+            return ""
+        facts = [_to_json(task_facts), *(_to_json(call.facts) for call in result.tool_calls if call.outcome is _Outcome.DONE)]
+        return _screened(text, " ".join(facts))
+    except Exception:
+        return ""
+
+
 def _screened(text: str, facts: str) -> str:
     """The model's free text cut short, or '' if any of it looks planted or holds a number not in the facts.
 
@@ -491,16 +545,13 @@ def _screened(text: str, facts: str) -> str:
     text outside the phrase list. So callers show reasoning escaped, labelled as
     model text, and never beside a price, vendor or approver.
     """
-    # Imported here: core is below rag, and this is the only place that looks up (see the hand-over note).
-    from ..rag.guard import _numbers, looks_injected
-
     # Look-alike digits become plain ones and invisible characters go ("½", "②", a zero-width space).
     normal = unicodedata.normalize("NFKC", text)
     visible = "".join(char for char in normal if unicodedata.category(char) != _FORMAT_CHARS)
 
     # Line breaks must not split a planted phrase; '[' must not hide a number as a citation.
     plain = " ".join(visible.split())
-    if looks_injected(plain) or _numbers(plain.replace("[", " ")) - _numbers(facts.replace("[", " ")):
+    if looks_injected(plain) or numbers_in(plain.replace("[", " ")) - numbers_in(facts.replace("[", " ")):
         return ""
     return textwrap.shorten(plain, _REASONING_MAX_CHARS, placeholder=" ...")  # whole words: a cut number would be a new one
 

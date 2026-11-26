@@ -139,3 +139,14 @@ def test_a_case_is_one_langfuse_session(system, spans, monkeypatch):
     view = workflows.start_boq(get_user("khalid"), config.SAMPLES_DIR / "boq_with_issues.csv", mode=RunMode.AGENT)
     workflows.decide(view.run_id, get_user("omar"), Decision.APPROVE)
     assert {dict(span.attributes).get("session.id") for span in spans()} == {view.run_id}
+
+
+def test_counts_only_is_readable_and_nests(monkeypatch):
+    monkeypatch.setenv("RAG_TRACE_CONTENT", "full")
+    assert not tracing.in_counts_only() and tracing.content("TEXT") == "TEXT"
+    with tracing.counts_only():
+        assert tracing.in_counts_only() and tracing.content("TEXT") is None
+        with tracing.counts_only():
+            assert tracing.in_counts_only()
+        assert tracing.in_counts_only()
+    assert not tracing.in_counts_only()

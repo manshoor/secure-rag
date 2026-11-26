@@ -667,15 +667,23 @@ def test_a_private_run_never_calls_the_model(spans, monkeypatch, privacy, scope)
     assert _in_langfuse(spans) == "" and runs.sent == []
 
 
-@pytest.mark.parametrize("mode", ["default", "full inside counts_only"])
-def test_traces_hold_no_text(spans, monkeypatch, mode):
+def test_an_open_run_inside_counts_only_is_private(spans, monkeypatch):
+    monkeypatch.setenv("RAG_TRACE_CONTENT", "full")
     runs = _langsmith()
-    if mode == "default":
-        _busy_run()
-    else:
-        monkeypatch.setenv("RAG_TRACE_CONTENT", "full")
-        with tracing.counts_only():
-            _busy_run()
+    client, handler = _Scripted(_turn(_finish())), _Handler()
+    with tracing.counts_only():
+        result = _run(client, _spec(handler), privacy=RunPrivacy.OPEN)
+    assert client.requests == [] and handler.seen == []
+    assert result.end_reason is EndReason.PRIVATE and result.turns == 0
+    assert _in_langfuse(spans) == "" and runs.sent == []
+
+    # Outside the block the same run calls the model again.
+    assert _run(_Scripted(_turn(_finish()))).end_reason is EndReason.COMPLETED
+
+
+def test_traces_hold_no_text(spans):
+    runs = _langsmith()
+    _busy_run()
     names = [span.name for span in spans()]
     assert names.count("agent_turn") == names.count("agent_tool") == 2
     for sent in (_in_langfuse(spans), _in_langsmith(runs)):
@@ -793,3 +801,80 @@ def test_a_full_trace_holds_reply_text_only_without_calls(spans, monkeypatch, co
 def test_no_import_cycle(order):
     code = "; ".join(f"import secure_rag.{name}" for name in order)
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+# ---- the scripted stand-in --------------------------------------------------------------------------
+
+
+def test_a_scripted_client_replays_its_turns_at_no_cost():
+    handler = _Handler()
+    client = rt.ScriptedClient([_turn(_lookup("V-1")), _turn(_finish())])
+    result = _run(client, _spec(handler))
+    assert result.end_reason is EndReason.COMPLETED and result.output == _DONE
+    assert handler.seen == [{"vendor": "V-1"}]
+    assert result.usage == Usage() and result.turns == 2
+
+
+def test_a_scripted_client_built_from_steps_ends_with_the_output():
+    handler = _Handler()
+    client = rt.ScriptedClient.from_steps([[_lookup("V-1"), _lookup("V-2")], [_lookup("V-3")]], {"decision": "stop"})
+    result = _run(client, _spec(handler))
+    assert result.end_reason is EndReason.COMPLETED and result.output == {"decision": "stop"}
+    assert handler.seen == [{"vendor": "V-1"}, {"vendor": "V-2"}, {"vendor": "V-3"}]
+    assert result.usage == Usage()
+
+
+def test_a_scripted_client_out_of_turns_ends_as_a_broken_result():
+    client = rt.ScriptedClient([_turn(_lookup())])
+    result = _run(client)
+    assert result.end_reason is EndReason.BROKEN_RESULT and result.turns == 2
+    assert _run(rt.ScriptedClient([])).end_reason is EndReason.BROKEN_RESULT
+
+
+# ---- screening other model text ---------------------------------------------------------------------
+
+
+def test_other_model_text_is_screened_like_reasoning(monkeypatch):
+    result = _run(_Scripted(_turn(_lookup()), _turn(_finish())))
+    assert rt.screen_model_text("Price 18,150.00 for 42 lines.", _FACTS, result) == "Price 18,150.00 for 42 lines."
+    assert rt.screen_model_text("Price 99 for all.", _FACTS, result) == ""
+    assert rt.screen_model_text(_PLANTED, _FACTS, result) == ""
+    assert rt.screen_model_text("18,150", {}, rt.AgentResult("x", EndReason.PRIVATE)) == ""
+
+    # The same function as reasoning, given the task facts and every ran call's facts.
+    seen = []
+    monkeypatch.setattr(rt, "_screened", lambda text, facts: seen.append(facts) or "kept")
+    assert rt.screen_model_text("any", _FACTS, result) == "kept"
+    assert "18,150.00" in seen[0] and "FACTS-TEXT" in seen[0]
+
+
+def test_screening_never_raises(monkeypatch):
+    def broken(text, facts):
+        raise ValueError("broken")
+
+    monkeypatch.setattr(rt, "_screened", broken)
+    assert rt.screen_model_text("any", _FACTS, rt.AgentResult("x", EndReason.PRIVATE)) == ""
+
+
+
+def test_the_argument_of_a_call_that_ran_is_not_a_fact():
+    result = _run(_Scripted(_turn(_lookup("77777")), _turn(_finish())))
+    assert result.tool_calls[0].outcome.value == "done"
+    assert rt.screen_model_text("Vendor 77777 fits.", _FACTS, result) == ""
+
+
+def test_text_that_is_not_a_string_is_dropped():
+    result = _run(_Scripted(_turn(_finish())))
+    assert rt.screen_model_text(5, _FACTS, result) == ""
+    assert rt.screen_model_text(None, _FACTS, result) == ""
+
+
+def test_changing_the_steps_after_from_steps_changes_nothing():
+    steps = [[_lookup("V-1")]]
+    output = {"decision": "stop"}
+    client = rt.ScriptedClient.from_steps(steps, output)
+    steps[0][0][1]["vendor"] = "V-9"
+    output["decision"] = "go"
+    handler = _Handler()
+    result = _run(client, _spec(handler))
+    assert handler.seen == [{"vendor": "V-1"}] and result.output == {"decision": "stop"}
