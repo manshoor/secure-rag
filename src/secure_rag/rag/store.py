@@ -235,6 +235,14 @@ class KnowledgeStore:
             return False
         return _readable(user, stamped, current_access({doc_id: stamped}).get(doc_id))
 
+    def readable_chunks(self, user: User) -> list[Chunk]:
+        """Every indexed chunk the user may read now, in index order: the same check as search.
+
+        Quarantined chunks were never indexed, so they never appear.
+        """
+        access_now = current_access(dict(self._stamped))
+        return [chunk for chunk in self._chunks if _readable(user, chunk.access, access_now.get(chunk.doc_id))]
+
     def hidden_canaries(self, user: User) -> list[str]:
         """Canary strings of documents the user may NOT read right now."""
         access_now = current_access({doc.doc_id: doc.access for doc in self._documents if doc.canary})

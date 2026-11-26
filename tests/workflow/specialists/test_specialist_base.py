@@ -175,3 +175,45 @@ def test_a_plain_string_success_fails_before_any_call():
 def test_a_wrong_shaped_validator_answer_falls_back(answer):
     outcome = _run(_Fake(_finish(_answer())), validate=lambda output: answer)
     assert outcome["status"] == Status.FALLBACK.value and outcome["decision"] == {"choice": "a"}
+
+
+# ---- after 2b QA: the reason's screen scope, and a status for nothing to do ------------------------
+
+from secure_rag.core.agent_runtime import Tool  # noqa: E402
+from secure_rag.workflow.specialists._base import ReasonScope  # noqa: E402
+
+_LOOKUP = Tool("lookup", "A number from a file.", {"type": "object", "properties": {}, "additionalProperties": False}, lambda args: {"note": "agreed 77 per m2"})
+_TOOL_SPEC = AgentSpec("toy", "Pick one.", (_LOOKUP,), _SCHEMA, max_turns=3, max_tool_calls=2, max_tokens=20_000, max_cost_usd=0.5)
+
+
+def _lookup_turn():
+    call = ToolCall("toolu_0", "lookup", {})
+    return ToolTurn("", (call,), "tool_use", Usage(500, 40, 0.2), ({"type": "tool_use", "id": call.id, "name": "lookup", "input": {}},))
+
+
+def _scoped(**scope):
+    client = _Fake(_lookup_turn(), _finish(_answer(reason="It was agreed at 77 per m2.")))
+    return run_specialist(_TOOL_SPEC, _FACTS, lambda *a: True, client, privacy=RunPrivacy.OPEN, success=Status.AGENT, rules=lambda: _RULES, validate=_validate, **scope)
+
+
+def test_by_default_the_reason_may_use_tool_result_numbers():
+    assert _scoped()["reason"] == "It was agreed at 77 per m2."
+    assert _scoped(reason_scope=ReasonScope.TASK_AND_TOOLS)["reason"] == "It was agreed at 77 per m2."
+
+
+def test_a_task_facts_scope_drops_numbers_from_tool_results():
+    outcome = _scoped(reason_scope=ReasonScope.TASK_FACTS)
+    assert outcome["status"] == Status.AGENT.value and outcome["reason"] == ""
+    assert outcome["audit"]["tool_calls"][0]["outcome"] == "done"  # the audit still shows the call
+
+
+def test_a_task_facts_scope_keeps_numbers_from_the_task():
+    client = _Fake(_lookup_turn(), _finish(_answer(reason="Option b fits the 2 packages.")))
+    outcome = run_specialist(_TOOL_SPEC, _FACTS, lambda *a: True, client, privacy=RunPrivacy.OPEN, success=Status.AGENT, rules=lambda: _RULES, validate=_validate, reason_scope=ReasonScope.TASK_FACTS)
+    assert outcome["reason"] == "Option b fits the 2 packages."
+
+
+def test_nothing_to_do_is_its_own_status_and_never_a_decider():
+    assert Status.NOTHING_TO_DO.value == "nothing_to_do"
+    with pytest.raises(ValueError):
+        _run(_Fake(), success=Status.NOTHING_TO_DO)

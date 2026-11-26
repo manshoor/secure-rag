@@ -9,8 +9,11 @@
 
 The decision holds enums and code-issued ids only. reason is model text: screened
 like reasoning, cut short, shown labelled; never part of the decision or the audit.
+Its screen checks numbers against the task facts, and by default the tool results
+too. Known limit: a sentence with no number ("No approval is needed.") passes either way.
 """
 
+import dataclasses
 import textwrap
 from collections.abc import Callable
 from enum import Enum
@@ -31,6 +34,14 @@ class Status(str, Enum):
     SCRIPTED = "scripted"  # the offline stand-in decided through the same loop
     PRIVATE = "private"  # a private run: the rules decided, not a failure
     FALLBACK = "fallback"  # the agent failed or its decision was rejected: the rules decided
+    NOTHING_TO_DO = "nothing_to_do"  # nothing to decide: an empty decision, no model call (set by a specialist)
+
+
+class ReasonScope(str, Enum):
+    """What the reason's numbers are checked against."""
+
+    TASK_FACTS = "task_facts"  # the task facts only: for tool results that carry file or policy text
+    TASK_AND_TOOLS = "task_and_tools"  # the task facts and every tool result that ran
 
 
 # The statuses an accepted decision may carry.
@@ -48,12 +59,14 @@ def run_specialist(
     rules: Callable[[], _Checked],
     validate: Callable[[dict], _Checked | None],
     case_id: str | None = None,
+    reason_scope: ReasonScope = ReasonScope.TASK_AND_TOOLS,
 ) -> dict:
     """Run the agent; on a private run, a failure or a rejected decision, the rules decide.
 
     success is the status of an accepted decision (AGENT or SCRIPTED). validate
     returns the checked decision and reason codes, or None to reject. A model
     failure never raises; a failure in rules is a bug in code and does.
+    reason_scope picks the facts the reason's numbers must come from.
     """
     if not isinstance(success, Status) or success not in _DECIDERS:
         raise ValueError("success must be AGENT or SCRIPTED")
@@ -69,7 +82,8 @@ def run_specialist(
         return outcome(spec.name, Status.FALLBACK, *rules(), "", result)
 
     # Accepted: the reason is the only model text kept, and only once screened.
-    reason = screen_model_text(result.output.get(_REASON_KEY, ""), task_facts, result)
+    seen = result if reason_scope is ReasonScope.TASK_AND_TOOLS else dataclasses.replace(result, tool_calls=())
+    reason = screen_model_text(result.output.get(_REASON_KEY, ""), task_facts, seen)
     return outcome(spec.name, success, *checked, _short(reason), result)
 
 
