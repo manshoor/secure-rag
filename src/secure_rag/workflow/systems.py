@@ -64,6 +64,14 @@ class CatalogueItem:
     unit_price: Decimal
 
 
+class ReplyRecord(str, Enum):
+    """How a vendor answered past requests for quotation. For sourcing only, never on a money path."""
+
+    RELIABLE = "reliable"
+    MIXED = "mixed"
+    NEW = "new"  # no record yet; also what a record without the field reads as
+
+
 @dataclass(frozen=True)
 class Vendor:
     """A vendor master record: who may be asked for a quotation, and for what."""
@@ -76,6 +84,7 @@ class Vendor:
     email: str
     bank_account: str
     licence_expiry: date
+    reply_record: ReplyRecord = ReplyRecord.NEW
 
 
 @dataclass(frozen=True)
@@ -154,9 +163,18 @@ def vendors() -> list[Vendor]:
         Vendor(
             row["id"], row["name"], row["company"], frozenset(row["categories"]), row["approved"] is True,
             row["email"], row["bank_account"], date.fromisoformat(row["licence_expiry"]),
+            _reply_record(row.get("reply_record")),
         )
         for row in _load(_VENDOR_FILE)["vendors"]
     ]
+
+
+def _reply_record(value: object) -> ReplyRecord:
+    """A sourcing hint only: a missing, null or unknown value reads as NEW and never stops a vendor read."""
+    try:
+        return ReplyRecord(value)
+    except (ValueError, TypeError):
+        return ReplyRecord.NEW
 
 
 def vendors_for(category: str, company: str) -> list[Vendor]:

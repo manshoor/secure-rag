@@ -70,6 +70,204 @@
       "email": "hello@shortcut-facades.invalid",
       "bank_account": "AE000000000000000000209",
       "licence_expiry": "2026-01-31"
+    },
+    {
+      "id": "V-JNR-1",
+      "name": "Quillmere Joinery LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": true,
+      "email": "quotes@quillmere-joinery.invalid",
+      "bank_account": "AE000000000000000000301",
+      "licence_expiry": "2027-07-31",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-JNR-2",
+      "name": "Tarnbrook Woodcraft LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": true,
+      "email": "estimating@tarnbrook-woodcraft.invalid",
+      "bank_account": "AE000000000000000000302",
+      "licence_expiry": "2027-04-30",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-JNR-3",
+      "name": "Hazelquay Interiors LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": true,
+      "email": "rfq@hazelquay-interiors.invalid",
+      "bank_account": "AE000000000000000000303",
+      "licence_expiry": "2027-10-31",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-JNR-4",
+      "name": "Ombergrain Carpentry LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": true,
+      "email": "sales@ombergrain.invalid",
+      "bank_account": "AE000000000000000000304",
+      "licence_expiry": "2027-01-08",
+      "reply_record": "new"
+    },
+    {
+      "id": "V-JNR-5",
+      "name": "Saltreed Joinery Works LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": true,
+      "email": "tenders@saltreed-joinery.invalid",
+      "bank_account": "AE000000000000000000305",
+      "licence_expiry": "2027-06-30",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-JNR-9",
+      "name": "Cornercut Joinery LLC",
+      "company": "alpha-construction",
+      "categories": ["joinery"],
+      "approved": false,
+      "email": "hello@cornercut-joinery.invalid",
+      "bank_account": "AE000000000000000000309",
+      "licence_expiry": "2026-05-31",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-ALG-1",
+      "name": "Glintmoor Aluminium LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": true,
+      "email": "quotes@glintmoor-aluminium.invalid",
+      "bank_account": "AE000000000000000000401",
+      "licence_expiry": "2027-08-31",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-ALG-2",
+      "name": "Vellumframe Glazing LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": true,
+      "email": "estimating@vellumframe.invalid",
+      "bank_account": "AE000000000000000000402",
+      "licence_expiry": "2027-01-10",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-ALG-3",
+      "name": "Brackwater Facade Systems LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": true,
+      "email": "rfq@brackwater-facades.invalid",
+      "bank_account": "AE000000000000000000403",
+      "licence_expiry": "2027-05-31",
+      "reply_record": "new"
+    },
+    {
+      "id": "V-ALG-4",
+      "name": "Sunquay Aluminium Works LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": true,
+      "email": "sales@sunquay-aluminium.invalid",
+      "bank_account": "AE000000000000000000404",
+      "licence_expiry": "2027-09-30",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-ALG-5",
+      "name": "Pellucid Arch Glazing LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": true,
+      "email": "tenders@pellucid-arch.invalid",
+      "bank_account": "AE000000000000000000405",
+      "licence_expiry": "2027-03-31",
+      "reply_record": "new"
+    },
+    {
+      "id": "V-ALG-9",
+      "name": "Fastpane Aluminium LLC",
+      "company": "alpha-construction",
+      "categories": ["aluminium_glazing"],
+      "approved": false,
+      "email": "hello@fastpane-aluminium.invalid",
+      "bank_account": "AE000000000000000000409",
+      "licence_expiry": "2026-08-31",
+      "reply_record": "new"
+    },
+    {
+      "id": "V-STN-1",
+      "name": "Duneveil Stoneworks LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": true,
+      "email": "quotes@duneveil-stone.invalid",
+      "bank_account": "AE000000000000000000501",
+      "licence_expiry": "2027-11-30",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-STN-2",
+      "name": "Basaltmere Marble LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": true,
+      "email": "estimating@basaltmere.invalid",
+      "bank_account": "AE000000000000000000502",
+      "licence_expiry": "2027-04-30",
+      "reply_record": "new"
+    },
+    {
+      "id": "V-STN-3",
+      "name": "Greywick Granite Trading LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": true,
+      "email": "rfq@greywick-granite.invalid",
+      "bank_account": "AE000000000000000000503",
+      "licence_expiry": "2027-07-31",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-STN-4",
+      "name": "Ochreledge Cladding LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": true,
+      "email": "sales@ochreledge.invalid",
+      "bank_account": "AE000000000000000000504",
+      "licence_expiry": "2027-02-28",
+      "reply_record": "reliable"
+    },
+    {
+      "id": "V-STN-5",
+      "name": "Latticequarry Stone LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": true,
+      "email": "tenders@latticequarry.invalid",
+      "bank_account": "AE000000000000000000505",
+      "licence_expiry": "2027-01-06",
+      "reply_record": "mixed"
+    },
+    {
+      "id": "V-STN-9",
+      "name": "Shortcut Stone LLC",
+      "company": "alpha-construction",
+      "categories": ["stone_cladding"],
+      "approved": false,
+      "email": "hello@shortcut-stone.invalid",
+      "bank_account": "AE000000000000000000509",
+      "licence_expiry": "2026-03-31",
+      "reply_record": "new"
     }
   ]
 }

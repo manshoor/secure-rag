@@ -28,7 +28,14 @@ _ONE_QUOTE = 1
 _THREE_QUOTES = 3
 
 # Words in a BOQ description that put the line in a quotation category (vendors.json).
-_CATEGORY_TERMS = {"glass_block": ("glass block",), "grc": ("grc",)}
+# The first category that fits wins, so new trades go after the old ones.
+_CATEGORY_TERMS = {
+    "glass_block": ("glass block",),
+    "grc": ("grc",),
+    "joinery": ("joinery",),
+    "aluminium_glazing": ("aluminium",),
+    "stone_cladding": ("marble", "granite"),
+}
 
 
 class Problem(str, Enum):

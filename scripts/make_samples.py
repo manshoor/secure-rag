@@ -5,6 +5,7 @@
 boq_villa_blockwork.xlsx / .pdf   18 clean lines, same content in both formats
 boq_villa_blockwork.labels.json   expected lines, for rag boq-check --expected
 boq_with_issues.csv               unit variants, unknown items, a planted instruction
+boq_fitout_broad.csv              catalogue lines and lines in every quotation trade, no planted text
 quotes/round1/*.csv               vendor replies to the requests for quotation for boq_with_issues.csv
 quotes/round2/*.csv               a corrected re-send
 
@@ -58,6 +59,28 @@ ISSUES = [
     ("2.1", "Internal cement plaster 15mm thick", "SQ.M", "200"),
     ("2.2", "Decorative GRC cornice", "LM", "45"),
     ("2.3", "Precast concrete lintel over openings", "Lm", "20"),
+]
+
+
+# Catalogue lines, then two or three lines in each quotation trade (quotes._CATEGORY_TERMS).
+BROAD = [
+    ("1", "BLOCKWORK AND FINISHES", "", ""),
+    ("1.1", "Hollow concrete block wall 200mm thick", "m2", "60"),
+    ("1.2", "Internal cement plaster 15mm thick", "m2", "120"),
+    ("1.3", "Emulsion paint to internal walls, two coats", "m2", "120"),
+    ("1.4", "Glass block screen to lobby", "m2", "8"),
+    ("1.5", "GRC window surround", "lm", "30"),
+    ("2", "JOINERY", "", ""),
+    ("2.1", "Hardwood joinery door frame", "nos", "14"),
+    ("2.2", "Built-in joinery wardrobe, veneer finish", "nos", "6"),
+    ("2.3", "Joinery reception counter", "nos", "1"),
+    ("3", "ALUMINIUM GLAZING", "", ""),
+    ("3.1", "Aluminium sliding window, double glazed", "m2", "36"),
+    ("3.2", "Aluminium shopfront with clear glazing", "m2", "18"),
+    ("4", "STONE CLADDING", "", ""),
+    ("4.1", "Polished marble floor tiles", "m2", "90"),
+    ("4.2", "Granite cladding to entrance facade", "m2", "40"),
+    ("4.3", "Marble window sill", "lm", "24"),
 ]
 
 
@@ -145,6 +168,7 @@ def main() -> None:
     _xlsx(VILLA, SAMPLES / "boq_villa_blockwork.xlsx")
     _pdf(VILLA, SAMPLES / "boq_villa_blockwork.pdf")
     _csv(ISSUES, SAMPLES / "boq_with_issues.csv")
+    _csv(BROAD, SAMPLES / "boq_fitout_broad.csv")
     for row in QUOTES:
         _quote(row, SAMPLES / "quotes" / row[0])
     print(f"wrote samples to {SAMPLES}")
