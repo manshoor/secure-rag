@@ -28,7 +28,7 @@ from ...boq.quotes import Problem
 from ...core.agent_runtime import AgentSpec, RunPrivacy, ScriptedClient, Tool
 from ..procurement_agent import _UNREADABLE_FILE, PkgStatus, _valid_by_package
 from ..workflow import Privacy
-from ._base import Status, run_specialist
+from ._base import _PACKAGE_ID, Status, _each, _holds, _one_of, _rows, _shaped, run_specialist
 
 _AGENT_NAME = "evaluation"
 _SHORT_TOOL = "short_packages"
@@ -329,3 +329,15 @@ def _problems(package: dict) -> set[str]:
 
 def _answer(package: str, recommend: str, problems: list[str]) -> dict:
     return {"package": package, "recommend": recommend, "problems_that_matter": list(problems)}
+
+
+# ---- saved decisions ------------------------------------------------------------------------------
+
+
+def decision_holds(decision: Any, reason_codes: Any) -> bool:
+    """True if a saved decision has this specialist's shape: package ids, a recommend enum, known problem codes.
+
+    Shape only: a decision that holds may still be wrong for the case (that is _validate's job).
+    """
+    packages = _rows({"package": _shaped(_PACKAGE_ID), "recommend": _one_of(_Recommend), "problems_that_matter": _each(_one_of(_KNOWN_PROBLEMS))})
+    return _holds({"packages": packages}, _ReasonCode, decision, reason_codes)

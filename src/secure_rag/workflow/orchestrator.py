@@ -69,13 +69,12 @@ from typing import Any
 
 from ..boq.boq import LineStatus
 from ..core.agent_runtime import AgentResult, AgentSpec, EndReason, RunPrivacy, ScriptedClient, Tool
-from . import procurement_agent, systems
+from . import procurement_agent
 from .procurement_agent import PkgStatus, RfqState, _allowed, _valid_by_package
 from .specialists import boq_intake, evaluation, policy_check, sourcing
 from .specialists._base import Status, outcome, run_specialist
-from .specialists.boq_intake import _NO_TRADE, _TRADES, _Action, _Review, weak_line_facts
-from .specialists.evaluation import _KNOWN_PROBLEMS, _Recommend
-from .specialists.sourcing import _Note, chase_facts
+from .specialists.boq_intake import weak_line_facts
+from .specialists.sourcing import chase_facts
 from .workflow import Entry, Privacy, RunMode, StepStatus, WfStatus
 
 _AGENT_NAME = "orchestrator"
@@ -104,11 +103,7 @@ _PRICE_STEP = "boq_price"
 _PROCUREMENT_GATE_STEP = "gate_procurement"
 _FINANCE_GATE_STEP = "gate_finance"
 
-# Saved outcomes: the shapes of code-issued ids, and of reason codes.
-_LINE_ID = re.compile(r"L[0-9]{1,4}")
-_VENDOR_ID = re.compile(r"V-[A-Z]{1,8}-[0-9]{1,4}")
-_PACKAGE_ID = re.compile(r"[a-z][a-z0-9_]{0,39}")
-_CHUNK_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,79}#[a-z0-9][a-z0-9-]{0,79}")
+# Saved outcomes: the shape of a task id (each specialist checks its own decision: decision_holds).
 _TASK_ID = re.compile(rf"{_ID_PREFIX}[0-9]{{1,4}}")
 
 # Shown with the paths in task_kinds.
@@ -579,7 +574,7 @@ def _outcome_facts(state: dict) -> tuple[dict, int]:
     """Saved specialist outcomes that pass the whitelist, and how many were dropped. Never reason, audit or usage."""
     found, dropped = {}, 0
     for task_id, saved in (state.get("outcomes") or {}).items():
-        kept = _kept_outcome(saved) if _shaped(_TASK_ID)(task_id) else None
+        kept = _kept_outcome(saved) if isinstance(task_id, str) and _TASK_ID.fullmatch(task_id) else None
         if kept is None:
             dropped += 1
             continue
@@ -588,74 +583,32 @@ def _outcome_facts(state: dict) -> tuple[dict, int]:
 
 
 def _kept_outcome(saved: Any) -> dict | None:
-    """The outcome's whitelisted fields if each is a known shape for its specialist; else None."""
+    """The outcome's whitelisted fields if the envelope holds and the specialist's decision_holds; else None."""
     if not isinstance(saved, dict):
         return None
     specialist = saved.get("specialist")
-    if not isinstance(specialist, str) or specialist not in _DECISIONS:
+    if not isinstance(specialist, str) or specialist not in _HOLDS:
         return None
-    if not _one_of(Status)(saved.get("status")) or not _each(_one_of(_REASON_CODES[specialist]))(saved.get("reason_codes")):
+    status = saved.get("status")
+    if not isinstance(status, str) or status not in {status.value for status in Status}:
         return None
 
-    # The decision: exactly the specialist's keys, each value a known shape.
-    fields = _DECISIONS[specialist]
-    decision = saved.get("decision")
-    if not isinstance(decision, dict) or set(decision) != set(fields):
+    # The decision and its codes: the specialist's own shape check, and the shape that specialist name saves.
+    decision, codes = saved.get("decision"), saved.get("reason_codes")
+    keys, holds = _HOLDS[specialist]
+    if not isinstance(decision, dict) or set(decision) != keys or not holds(decision, codes):
         return None
-    if not all(check(decision[key]) for key, check in fields.items()):
-        return None
-    return {"specialist": specialist, "status": saved["status"], "decision": copy.deepcopy(decision), "reason_codes": list(saved["reason_codes"])}
+    return {"specialist": specialist, "status": saved["status"], "decision": copy.deepcopy(decision), "reason_codes": list(codes)}
 
 
-def _shaped(pattern: re.Pattern) -> Callable[[Any], bool]:
-    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
-
-
-def _one_of(values: Any) -> Callable[[Any], bool]:
-    allowed = frozenset(getattr(value, "value", value) for value in values)
-    return lambda value: isinstance(value, str) and value in allowed
-
-
-def _each(check: Callable[[Any], bool]) -> Callable[[Any], bool]:
-    return lambda value: isinstance(value, list) and all(check(item) for item in value)
-
-
-def _rows(fields: dict[str, Callable[[Any], bool]]) -> Callable[[Any], bool]:
-    """A list of dicts with exactly these keys, each value passing its check."""
-    def row_holds(row: Any) -> bool:
-        return isinstance(row, dict) and set(row) == set(fields) and all(check(row[key]) for key, check in fields.items())
-    return _each(row_holds)
-
-
-def _catalogue_code(value: Any) -> bool:
-    """'' or a code from the catalogue (intake's hint)."""
-    return value == "" or (isinstance(value, str) and value in {item.code for item in systems.catalogue()})
-
-
-# Per specialist (by the name its outcome carries): its own reason codes.
-_REASON_CODES = {
-    "boq_intake": boq_intake._ReasonCode,
-    "policy_check": policy_check._ReasonCode,
-    "sourcing_vendors": sourcing._AskCode,
-    "sourcing_chase": sourcing._ChaseCode,
-    "evaluation": evaluation._ReasonCode,
-}
-
-# Per specialist: the decision keys and what each may hold.
-_PAIR = _rows({"vendor_id": _shaped(_VENDOR_ID), "package": _shaped(_PACKAGE_ID)})
-_DECISIONS: dict[str, dict[str, Callable[[Any], bool]]] = {
-    "boq_intake": {"lines": _rows({
-        "line": _shaped(_LINE_ID), "action": _one_of(_Action), "suggested_code": _catalogue_code,
-        "review": _one_of(_Review), "trade": _one_of((*_TRADES, _NO_TRADE)),
-    })},
-    "policy_check": {"cite": _each(_shaped(_CHUNK_ID))},
-    "sourcing_vendors": {"packages": _rows({
-        "package": _shaped(_PACKAGE_ID), "ask": _each(_shaped(_VENDOR_ID)), "note": _one_of(_Note), "left_out": _each(_shaped(_VENDOR_ID)),
-    })},
-    "sourcing_chase": {"chase": _PAIR, "skipped": _PAIR},
-    "evaluation": {"packages": _rows({
-        "package": _shaped(_PACKAGE_ID), "recommend": _one_of(_Recommend), "problems_that_matter": _each(_one_of(_KNOWN_PROBLEMS)),
-    })},
+# Per specialist (by the name its outcome carries): its decision keys and its own shape check.
+# Sourcing saves two shapes under two names; its check tells them apart by the keys.
+_HOLDS: dict[str, tuple[frozenset[str], Callable[[Any, Any], bool]]] = {
+    "boq_intake": (frozenset({"lines"}), boq_intake.decision_holds),
+    "policy_check": (frozenset({"cite"}), policy_check.decision_holds),
+    "sourcing_vendors": (frozenset({"packages"}), sourcing.decision_holds),
+    "sourcing_chase": (frozenset({"chase", "skipped"}), sourcing.decision_holds),
+    "evaluation": (frozenset({"packages"}), evaluation.decision_holds),
 }
 
 

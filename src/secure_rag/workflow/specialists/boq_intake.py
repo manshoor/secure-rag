@@ -42,7 +42,7 @@ from ...boq.quotes import _CATEGORY_TERMS, line_category
 from ...core.agent_runtime import AgentResult, AgentSpec, EndReason, RunPrivacy, ScriptedClient, Tool
 from .. import systems
 from ..workflow import Privacy
-from ._base import ReasonScope, Status, outcome, run_specialist
+from ._base import _LINE_ID, ReasonScope, Status, _holds, _one_of, _rows, _shaped, outcome, run_specialist
 
 _AGENT_NAME = "boq_intake"
 _WEAK_TOOL = "weak_lines"
@@ -363,3 +363,23 @@ def _rules(lines: list[dict]) -> tuple[dict, list[str]]:
 def _row(line: dict, answer: dict) -> dict:
     """Code-issued id and enums only: item numbers are file text and stay in the facts."""
     return {"line": line["line"], "action": answer["action"], "suggested_code": answer["suggested_code"], "review": answer["review"], "trade": answer["trade"]}
+
+
+# ---- saved decisions ------------------------------------------------------------------------------
+
+
+def decision_holds(decision: Any, reason_codes: Any) -> bool:
+    """True if a saved decision has this specialist's shape: exact keys, line ids, enums, catalogue codes.
+
+    Shape only: a decision that holds may still be wrong for the case (that is _validate's job).
+    """
+    lines = _rows({
+        "line": _shaped(_LINE_ID), "action": _one_of(_Action), "suggested_code": _catalogue_code,
+        "review": _one_of(_Review), "trade": _one_of((*_TRADES, _NO_TRADE)),
+    })
+    return _holds({"lines": lines}, _ReasonCode, decision, reason_codes)
+
+
+def _catalogue_code(value: Any) -> bool:
+    """'' or a code from the catalogue (a hint)."""
+    return value == "" or (isinstance(value, str) and value in {item.code for item in systems.catalogue()})

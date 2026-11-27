@@ -47,7 +47,7 @@ from ...rag.store import KnowledgeStore
 from ..policy import EXECUTIVE_APPROVAL_AED, SINGLE_QUOTE_BELOW_AED, budget_approver_roles
 from ..procurement_agent import _POLICY_DOC, AGENT_ID, _rule_for
 from ..workflow import Privacy
-from ._base import ReasonScope, Status, outcome, run_specialist
+from ._base import _CHUNK_ID, ReasonScope, Status, _each, _holds, _shaped, outcome, run_specialist
 
 _AGENT_NAME = "policy_check"
 _LIST_TOOL = "policy_sections"
@@ -288,3 +288,14 @@ def _true_codes(facts: dict) -> set[_ReasonCode]:
     if facts["band"] == _Band.ABOVE_EXECUTIVE.value:
         found.add(_ReasonCode.OPEN_TENDER)
     return found
+
+
+# ---- saved decisions ------------------------------------------------------------------------------
+
+
+def decision_holds(decision: Any, reason_codes: Any) -> bool:
+    """True if a saved decision has this specialist's shape: exactly cite, a list of section ids; known codes.
+
+    Shape only: a decision that holds may still be wrong for the case (that is _validate's job).
+    """
+    return _holds({"cite": _each(_shaped(_CHUNK_ID))}, _ReasonCode, decision, reason_codes)

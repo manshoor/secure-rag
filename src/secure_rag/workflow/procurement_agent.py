@@ -13,11 +13,14 @@ the tool and its arguments before it runs. Prices come only from quote files,
 the winner is the lowest valid quote, and the quotation rule uses the run total.
 The planner sees ids, counts, amounts and statuses, never file text. Each pause is
 two nodes (workflow._ask): one only waits, the next acts on the saved reply. Outbox writes are keyed, so a re-run never sends twice.
+Four places ask a specialist (policy_rule, pick_vendors, ask_procurement, the extend at
+gate_quotes): it proposes, code checks the decision again and applies it (see _consult).
 """
 
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -25,10 +28,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from . import systems
 from ..core import audit, config, tracing
-from ..rag.answer import ask
 from ..boq.boq import REPEATED_ITEM, ZERO_LINE
 from ..boq.boq_parser import parse_quote
-from ..core.identity import User
+from ..core.agent_runtime import AgentResult, EndReason, RunPrivacy
 from ..core.llm import ClaudeClient, ModelRefused, ModelUnavailable, Usage
 from .policy import EXECUTIVE_APPROVAL_AED, money, quotes_required
 from ..boq.quotes import Rfq, check_quote, line_category, quotes_needed
@@ -49,6 +51,10 @@ _NEEDS_PERSON = "needs a person: "
 # The rule is not known while the run total is zero: the quotes will set it.
 _RULE_FROM_QUOTES = "set by the quote total"
 _UNKNOWN_TOOL = "unknown"  # recorded in place of a tool name the model invented
+_DEFAULT_NOTE = "standard"  # sourcing's standard request note: also for packages saved before notes existed
+_SPECIALIST_EVENT = "specialist"
+_SPECIALIST_ERROR = "specialist_error"
+_INVALID_OUTCOME = "invalid_outcome"  # audited as the error when a decision fails its shape check
 
 
 class Tool(str, Enum):
@@ -79,6 +85,40 @@ class RfqState(str, Enum):
     DRAFTED = "drafted"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class _Kind(str, Enum):
+    """The specialist tasks inside the loop's tools, named as the orchestrator's task kinds."""
+
+    CHECK_POLICY = "check_policy"
+    PICK_VENDORS = "pick_vendors"
+    EVALUATE_SHORTFALL = "evaluate_shortfall"
+    PLAN_CHASE = "plan_chase"
+
+
+# Each kind's specialist, by the name its outcome carries. Restated: the specialists import this module.
+_SPECIALISTS = {
+    _Kind.CHECK_POLICY: "policy_check",
+    _Kind.PICK_VENDORS: "sourcing_vendors",
+    _Kind.EVALUATE_SHORTFALL: "evaluation",
+    _Kind.PLAN_CHASE: "sourcing_chase",
+}
+
+# The decision keys each task saves; sourcing's check alone cannot tell its two shapes apart.
+_DECISION_KEYS = {
+    _Kind.CHECK_POLICY: {"cite"},
+    _Kind.PICK_VENDORS: {"packages"},
+    _Kind.EVALUATE_SHORTFALL: {"packages"},
+    _Kind.PLAN_CHASE: {"chase", "skipped"},
+}
+
+
+class _SpentError(Exception):
+    """Code raised after a paid specialist call: carries the run's usage with that call in it."""
+
+    def __init__(self, usage: dict) -> None:
+        super().__init__("raised after a specialist call")
+        self.usage = usage
 
 
 class StepOutcome(str, Enum):
@@ -300,20 +340,26 @@ def agent_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
 
     # The timeline shows code's fixed reason for the tool, never a planner's words.
     row = {"n": agent["steps"], "tool": proposal.tool, "args": proposal.args, "why": _WHY[Tool(proposal.tool)], "fallback": fallback}
-    state = {**state, "agent_steps": state["agent_steps"] + earlier}
+    # The tool sees the run's usage with this step's planner call in it: a specialist adds to that.
+    state = {**state, "agent_steps": state["agent_steps"] + earlier, "usage": base["usage"]}
     if call == agent["last_call"] and unchanged:
         return _needs_person(state, agent, "repeated step with no change", row, base)
 
     # Run: one failure goes back to the planner; a second one raises, so resume retries the step.
     try:
         update, result = _TOOLS[Tool(proposal.tool)](runner, state, agent, proposal.args)
-    except Exception:
+    except Exception as error:
         agent["errors"] += 1
         if agent["errors"] >= MAX_TOOL_ERRORS:
+            # The caller sees the real error, never the usage carrier.
+            if isinstance(error, _SpentError):
+                raise error.__cause__ from None
             raise
         row = {**row, "status": StepOutcome.ERROR.value, "result": {}}
         _audit(state, row)
-        return {**base, "agent": agent, "agent_steps": state["agent_steps"] + [row]}
+        # A raise after a paid specialist call still counts that call.
+        spent = error.usage if isinstance(error, _SpentError) else base["usage"]
+        return {**base, "usage": spent, "agent": agent, "agent_steps": state["agent_steps"] + [row]}
 
     agent = update.pop("agent")
     agent.update(errors=0, last_call=call)
@@ -421,16 +467,32 @@ def _main_tool(state: Any) -> Tool:
 
 
 def _policy_rule(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
-    """The quotation rule from policy.py; the citation is retrieved with the agent's own permissions."""
-    from .workflow import Privacy, _policy_question, _trace_scope
+    """Code's quotation rule, then the policy specialist's citation. cited: the citation is not empty."""
+    agent = _set_rule(agent)
+    update = _cite(runner, state, agent)
+    saved = update.get("outcomes", state.get("outcomes") or {})
+    cited = bool(saved[_outcome_key(state, _Kind.CHECK_POLICY)]["decision"]["cite"])
+    return {**update, "agent": agent}, {"rule": agent["policy"], "cited": cited}
 
-    total = Decimal(agent["catalogue_total"])
-    agent_user = User(AGENT_ID, "Procurement agent", frozenset({state["company"]}), frozenset({"employee", "procurement"}))
-    with _trace_scope(state):
-        answer = ask(runner._store, runner._composer, agent_user, _policy_question(total, Privacy(state["privacy"]), state["company"]))
-    cited = not answer.refused and any(c.doc_id == _POLICY_DOC for c in answer.citations)
-    rule = _rule_for(total)
-    return {"agent": {**agent, "policy": rule}}, {"rule": rule, "cited": cited}
+
+def _set_rule(agent: dict) -> dict:
+    """The quotation rule from policy.py on the catalogue total. Code's alone, always."""
+    return {**agent, "policy": _rule_for(Decimal(agent["catalogue_total"]))}
+
+
+def _cite(runner: "WorkflowRunner", state: "WfState", agent: dict) -> dict:
+    """The policy specialist's citation, saved with its usage. One per round: a repeat reuses the saved one."""
+    from .specialists import policy_check
+
+    if _outcome_key(state, _Kind.CHECK_POLICY) in (state.get("outcomes") or {}):
+        return {}
+    current = {**state, "agent": agent}
+    found = _consult(
+        state, _Kind.CHECK_POLICY,
+        lambda: policy_check.cite_policy(current, runner._store, runner._agent_client, **_options(state)),
+        lambda: ({"cite": []}, []),
+    )
+    return _saved(state, _Kind.CHECK_POLICY, found)
 
 
 def _rule_for(total: Decimal) -> str:
@@ -439,14 +501,49 @@ def _rule_for(total: Decimal) -> str:
 
 
 def _pick_vendors(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
-    """Approved vendors of the run's company for each category. The planner cannot add one."""
+    """The sourcing specialist's ask per package, checked again against the vendor master now.
+
+    The planner cannot add a vendor, and neither can the specialist: an asked vendor
+    that is not askable now is left out; a package with none left gets no_vendors.
+    """
+    from .specialists import sourcing
+
+    # The vendor master is read before the paid call: only pure code runs after it.
+    askable = _askable_now(state)
+    found = _consult(
+        state, _Kind.PICK_VENDORS,
+        lambda: sourcing.pick_vendors(state, runner._agent_client, **_options(state)),
+        lambda: _ask_rules(state, askable),
+    )
+    saved = _saved(state, _Kind.PICK_VENDORS, found)
+    try:
+        packages = _applied_ask(state, found, askable)
+    except Exception as error:
+        raise _SpentError(saved["usage"]) from error
+    result = {"packages": len(packages), "vendors": sum(len(p["vendors"]) for p in packages)}
+    return {**saved, "packages": packages, "agent": {**agent, "picked": True}}, result
+
+
+def _applied_ask(state: "WfState", found: dict, askable: dict[str, list[str]]) -> list[dict]:
+    """Each package's accepted ask, each vendor once and askable now; its note id with it."""
+    rows = {row["package"]: row for row in found["decision"]["packages"]}
     packages = []
     for package in state["packages"]:
-        vendors = [vendor.vendor_id for vendor in systems.vendors_for(package["category"], state["company"])]
+        row = rows.get(package["id"], {"ask": [], "note": ""})
+        vendors = [vendor_id for vendor_id in dict.fromkeys(row["ask"]) if vendor_id in askable[package["id"]]]
         status = package["status"] if vendors else PkgStatus.NO_VENDORS.value
-        packages.append({**package, "vendors": vendors, "status": status})
-    result = {"packages": len(packages), "vendors": sum(len(p["vendors"]) for p in packages)}
-    return {"packages": packages, "agent": {**agent, "picked": True}}, result
+        packages.append({**package, "vendors": vendors, "note": row["note"], "status": status})
+    return packages
+
+
+def _ask_rules(state: "WfState", askable: dict[str, list[str]]) -> tuple[dict, list[str]]:
+    """Today's list in sourcing's shape: every askable vendor of the category, the standard note."""
+    rows = []
+    for package in state["packages"]:
+        vendors = askable[package["id"]]
+        if vendors:
+            rows.append({"package": package["id"], "ask": vendors, "note": _DEFAULT_NOTE, "left_out": []})
+    return {"packages": rows}, []
 
 
 def _draft_rfqs(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
@@ -516,8 +613,16 @@ def _chase_vendor(runner: "WorkflowRunner", state: "WfState", agent: dict, args:
 
 
 def _ask_procurement(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
+    """The evaluation specialist's recommendation per short package, saved for the quotes gate; then the gate."""
+    from .specialists import evaluation
+
     short = sum(p["status"] == PkgStatus.SHORT.value for p in state["packages"])
-    return {"agent": {**agent, "next": "gate_quotes"}}, {"short": short}
+    found = _consult(
+        state, _Kind.EVALUATE_SHORTFALL,
+        lambda: evaluation.evaluate_shortfall(state, runner._agent_client, **_options(state)),
+        lambda: ({"packages": []}, []),
+    )
+    return {**_saved(state, _Kind.EVALUATE_SHORTFALL, found), "agent": {**agent, "next": "gate_quotes"}}, {"short": short}
 
 
 def _finalize(runner: "WorkflowRunner", state: "WfState", agent: dict, args: dict) -> tuple[dict, dict]:
@@ -569,7 +674,9 @@ _TOOLS: dict[Tool, Callable[..., tuple[dict, dict]]] = {
 
 
 def rfq_payload(state: "WfState") -> dict:
-    return {"gate": "rfq", "approver_roles": ["procurement"], "requests": _request_count(state)}
+    """notes: the request note id per package that will be asked."""
+    notes = {p["id"]: p.get("note") or _DEFAULT_NOTE for p in state["packages"] if p["vendors"] and p["status"] in _LIVE}
+    return {"gate": "rfq", "approver_roles": ["procurement"], "requests": _request_count(state), "notes": notes}
 
 
 def wait_payload(state: "WfState") -> dict:
@@ -577,7 +684,12 @@ def wait_payload(state: "WfState") -> dict:
 
 
 def quotes_payload(state: "WfState") -> dict:
-    return {"gate": "quotes", "approver_roles": ["procurement"], "short": sum(p["status"] == PkgStatus.SHORT.value for p in state["packages"])}
+    """recommendations: the saved evaluation of this round (ids and codes, never its reason); the gate still decides."""
+    found = (state.get("outcomes") or {}).get(_outcome_key(state, _Kind.EVALUATE_SHORTFALL))
+    rows = found["decision"]["packages"] if found else []
+    recommendations = [{"package": row["package"], "recommend": row["recommend"], "problems_that_matter": list(row["problems_that_matter"])} for row in rows]
+    short = sum(p["status"] == PkgStatus.SHORT.value for p in state["packages"])
+    return {"gate": "quotes", "approver_roles": ["procurement"], "short": short, "recommendations": recommendations}
 
 
 def rfq_apply(state: "WfState") -> "WfState":
@@ -605,20 +717,36 @@ def rfq_apply(state: "WfState") -> "WfState":
         return {**step, "packages": packages, "flags": state["flags"] + [flag], "events": state["events"] + [event],
                 "agent": {**agent, "rfq": RfqState.REJECTED.value}, "reason": "", "reply": {}}
 
-    # Approved: one request per vendor and package, each written once.
+    # Approved: each vendor checked again now (struck off, other company, licence expired since the pick).
+    # One request per vendor still askable and package, each written once, with code's note words.
     private = state["privacy"] == workflow.Privacy.COUNTS_ONLY.value
-    sent = 0
+    today = config.today()
     expected: list[str] = []
+    packages = []
     for package in state["packages"]:
-        for vendor_id in package["vendors"]:
+        askable = _askable(package["category"], state["company"], today)
+        vendors = [vendor_id for vendor_id in package["vendors"] if vendor_id in askable]
+        note = package.get("note") or _DEFAULT_NOTE
+        for vendor_id in vendors:
             vendor = _vendor(vendor_id)
             entry = {"to": vendor_id, "email": vendor.email if vendor else "", "company": state["company"],
-                     "package": package["id"], "lines": _request_lines(state, package, private)}
-            sent += workflow._write_outbox(state["run_id"], "rfq", entry, key=f"{vendor_id}:{package['id']}")
+                     "package": package["id"], "lines": _request_lines(state, package, private), **_note_fields(note)}
+            workflow._write_outbox(state["run_id"], "rfq", entry, key=f"{vendor_id}:{package['id']}")
             expected.append(vendor_id)
+
+        # A package whose every vendor failed the check now has nobody to ask.
+        status = PkgStatus.NO_VENDORS.value if package["vendors"] and not vendors else package["status"]
+        packages.append({**package, "vendors": vendors, "status": status})
     step = _step(state, "gate_rfq", StepStatus.DONE, {**detail, "requests": len(expected)})
     agent.update(rfq=RfqState.APPROVED.value, expected=sorted(set(expected)), round_closed=not expected)
-    return {**step, "events": state["events"] + [event], "agent": agent, "reason": "", "reply": {}}
+    return {**step, "packages": packages, "events": state["events"] + [event], "agent": agent, "reason": "", "reply": {}}
+
+
+def _note_fields(note: str) -> dict:
+    """The note id and the fixed words a vendor reads for it (code's, never model text)."""
+    from .specialists import sourcing
+
+    return {"note": note, "note_text": sourcing.note_text(note)}
 
 
 def wait_apply(state: "WfState") -> "WfState":
@@ -657,9 +785,14 @@ def wait_apply(state: "WfState") -> "WfState":
     return {**step, "quotes": quotes, "events": state["events"] + [event], "agent": agent, "reply": {}}
 
 
-def quotes_apply(state: "WfState") -> "WfState":
-    """Too few valid quotes: procurement extends once or drops the lines."""
+def quotes_apply(runner: "WorkflowRunner", state: "WfState") -> "WfState":
+    """Too few valid quotes: procurement extends once or drops the lines.
+
+    Extend: code's chase list, ordered and narrowed by the sourcing specialist, checked
+    again; chase, expected and round_closed are set here, before any planner step.
+    """
     from . import workflow
+    from .specialists import sourcing
     from .workflow import Gate, StepStatus, _record, _resolve_approver, _step
 
     short = [p for p in state["packages"] if p["status"] == PkgStatus.SHORT.value]
@@ -680,17 +813,52 @@ def quotes_apply(state: "WfState") -> "WfState":
         packages = [{**p, "status": PkgStatus.DROPPED.value} if p["status"] == PkgStatus.SHORT.value else p for p in state["packages"]]
         return {**step, "packages": packages, "events": state["events"] + [event], "agent": agent, "reason": "", "reply": {}}
 
-    # Extend once: chase every invited vendor of a short package that has no valid quote.
+    # Extend once: code's list is every invited vendor of a short package that has no valid quote
+    # and may still be asked. The vendor master is read here, before the paid call.
+    askable = _askable_now(state)
+    offered = {**state, "packages": [{**p, "vendors": [v for v in p["vendors"] if v in askable[p["id"]]]} for p in state["packages"]]}
     valid = _valid_by_package(state["quotes"])
-    chase = [
+    listed = [
         {"vendor_id": vendor_id, "package": p["id"]}
-        for p in short
+        for p in offered["packages"]
+        if p["status"] == PkgStatus.SHORT.value
         for vendor_id in p["vendors"]
         if vendor_id not in {q["vendor_id"] for q in valid.get(p["id"], [])}
     ]
+    least = {row["package"]: row["min_chase"] for row in sourcing.chase_facts(offered)["packages"]}
+    agent.update(extended=True, round=agent["round"] + 1)
+    moved = {**state, "agent": agent}
+
+    # The specialist sees only those targets, orders them and may narrow them; code keeps targets on
+    # its list, and a package left below its minimum is chased in full.
+    found = _consult(
+        moved, _Kind.PLAN_CHASE,
+        lambda: sourcing.pick_chase(offered, runner._agent_client, **_options(state)),
+        lambda: ({"chase": listed, "skipped": []}, []),
+    )
+    chase = _floored_chase(_checked_chase(found["decision"]["chase"], listed), listed, least)
     expected = sorted({target["vendor_id"] for target in chase})
-    agent.update(extended=True, round=agent["round"] + 1, chase=chase, expected=expected, round_closed=not expected)
-    return {**step, "events": state["events"] + [event], "agent": agent, "reason": "", "reply": {}}
+    agent.update(chase=chase, expected=expected, round_closed=not expected)
+    return {**step, **_saved(moved, _Kind.PLAN_CHASE, found), "events": state["events"] + [event], "agent": agent, "reason": "", "reply": {}}
+
+
+def _checked_chase(accepted: list[dict], listed: list[dict]) -> list[dict]:
+    """The accepted order, each target once, on code's list (askable when it was built)."""
+    kept: list[dict] = []
+    for entry in accepted:
+        target = {"vendor_id": entry["vendor_id"], "package": entry["package"]}
+        if target not in listed or target in kept:
+            continue
+        kept.append(target)
+    return kept
+
+
+def _floored_chase(chase: list[dict], listed: list[dict], least: dict[str, int]) -> list[dict]:
+    """A package with fewer kept targets than its minimum takes code's whole list for it."""
+    low = {package for package, count in least.items() if sum(t["package"] == package for t in chase) < count}
+    if not low:
+        return chase
+    return [t for t in chase if t["package"] not in low] + [t for t in listed if t["package"] in low]
 
 
 def hold_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
@@ -786,6 +954,17 @@ def _rank(quote: dict) -> tuple[Decimal, int]:
 # ---- helpers --------------------------------------------------------------------------------------
 
 
+def _askable(category: str, company: str, today: date) -> list[str]:
+    """Vendor ids that may be asked now: approved, the run's company, the category, licence not expired today."""
+    return [vendor.vendor_id for vendor in systems.vendors_for(category, company) if vendor.licence_expiry >= today]
+
+
+def _askable_now(state: Any) -> dict[str, list[str]]:
+    """Each package's askable vendors, read once, before any paid call."""
+    today = config.today()
+    return {package["id"]: _askable(package["category"], state["company"], today) for package in state["packages"]}
+
+
 def _vendor(vendor_id: str) -> systems.Vendor | None:
     return next((vendor for vendor in systems.vendors() if vendor.vendor_id == vendor_id), None)
 
@@ -820,3 +999,73 @@ def _audit(state: "WfState", row: dict) -> None:
     audit.record("agent_step", user=state["requester"], run=state["run_id"], **detail)
     with tracing.observe("agent_step", metadata={"run": state["run_id"], **_flat(detail)}):
         pass
+
+
+# ---- specialists: one seam per tool -------------------------------------------------------------------
+#
+#   tool ─► _consult ─► specialist entry ─┬─► outcome ──────────────────────────┐
+#                                         └─► raised (a bug in code): rules, fallback ─┤
+#        ◄─ _saved: state["outcomes"][_outcome_key], usage added ◄──────────────────────┘
+#
+# The outcome's reason (model text) lives only in state["outcomes"]: never in a step row,
+# an audit line, a payload or the view. Code applies only the decision, checked again.
+
+
+def _consult(state: "WfState", kind: _Kind, entry: Callable[[], dict], rules: Callable[[], tuple[dict, list[str]]]) -> dict:
+    """One specialist call and its audit line. A raise is caught here and is not a tool error:
+    today's rules answer is saved instead, status fallback, with the exception's class name audited."""
+    from .specialists._base import Status, outcome
+
+    name = _SPECIALISTS[kind]
+    try:
+        found = entry()
+    except Exception as error:
+        audit.record(_SPECIALIST_ERROR, user=state["requester"], run=state["run_id"], name=name, error=type(error).__name__)
+        found = outcome(name, Status.FALLBACK, *rules(), "", AgentResult(name, EndReason.UNAVAILABLE))
+
+    # A decision that fails its shape check is treated as a raise, but the call it cost still counts.
+    if not _holds(kind, found["decision"], found["reason_codes"]):
+        audit.record(_SPECIALIST_ERROR, user=state["requester"], run=state["run_id"], name=name, error=_INVALID_OUTCOME)
+        spent = found["usage"]
+        found = {**outcome(name, Status.FALLBACK, *rules(), "", AgentResult(name, EndReason.UNAVAILABLE)), "usage": spent}
+
+    # Ids, enums and counts only: never the reason.
+    facts = found["audit"]
+    audit.record(_SPECIALIST_EVENT, user=state["requester"], run=state["run_id"], name=name, status=found["status"],
+                 reason_codes=list(found["reason_codes"]), turns=facts["turns"], tool_calls=len(facts["tool_calls"]))
+    return found
+
+
+def _holds(kind: _Kind, decision: Any, reason_codes: Any) -> bool:
+    """The task's own decision keys and its specialist's shape check."""
+    from .specialists import evaluation, policy_check, sourcing
+
+    module = {_Kind.CHECK_POLICY: policy_check, _Kind.EVALUATE_SHORTFALL: evaluation}.get(kind, sourcing)
+    return module.decision_holds(decision, reason_codes) is True and set(decision) == _DECISION_KEYS[kind]
+
+
+def _options(state: "WfState") -> dict:
+    """Open only for a normal run; the run id joins the specialist's traces to the case."""
+    from .workflow import Privacy
+
+    privacy = RunPrivacy.OPEN if state["privacy"] == Privacy.NORMAL.value else RunPrivacy.PRIVATE
+    return {"privacy": privacy, "case_id": state["run_id"]}
+
+
+def _outcome_key(state: "WfState", kind: _Kind) -> str:
+    """Where an outcome is saved: '<task kind>:<round>' (3d returns the running task's id here)."""
+    return f"{kind.value}:{state['agent']['round']}"
+
+
+def _saved(state: "WfState", kind: _Kind, found: dict) -> dict:
+    """The outcome under its key, and its usage added to the run's."""
+    outcomes = {**(state.get("outcomes") or {}), _outcome_key(state, kind): found}
+    return {"outcomes": outcomes, "usage": _with_usage(state["usage"], found["usage"])}
+
+
+def _with_usage(current: dict, used: dict) -> dict:
+    return {
+        "input": current.get("input", 0) + used["input_tokens"],
+        "output": current.get("output", 0) + used["output_tokens"],
+        "cost_usd": current.get("cost_usd", 0.0) + used["cost_usd"],
+    }

@@ -17,6 +17,7 @@ import copy
 import json
 import threading
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
@@ -532,7 +533,7 @@ def test_an_unknown_note_has_no_text(note):
 
 
 def _extend(state: dict) -> dict:
-    return procurement_agent.quotes_apply({**state, "reply": {"approver": "omar", "decision": "extend"}})
+    return procurement_agent.quotes_apply(SimpleNamespace(_agent_client=None), {**state, "reply": {"approver": "omar", "decision": "extend"}})
 
 
 def test_code_s_chase_list_is_the_one_quotes_apply_builds(short_state, broad_short):

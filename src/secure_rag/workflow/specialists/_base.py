@@ -14,14 +14,22 @@ too. Known limit: a sentence with no number ("No approval is needed.") passes ei
 """
 
 import dataclasses
+import re
 import textwrap
 from collections.abc import Callable
 from enum import Enum
+from typing import Any
 
 from ...core.agent_runtime import AgentResult, AgentSpec, EndReason, RunPrivacy, run_agent, screen_model_text
 
 _REASON_KEY = "reason"  # the output schema's free-text field
 _REASON_MAX_CHARS = 200
+
+# Saved decisions: the shapes of code-issued ids (each specialist's decision_holds).
+_LINE_ID = re.compile(r"L[0-9]{1,4}")
+_VENDOR_ID = re.compile(r"V-[A-Z]{1,8}-[0-9]{1,4}")
+_PACKAGE_ID = re.compile(r"[a-z][a-z0-9_]{0,39}")
+_CHUNK_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,79}#[a-z0-9][a-z0-9-]{0,79}")
 
 # A decision and its reason codes, as code checked or chose them.
 _Checked = tuple[dict, list[str]]
@@ -118,3 +126,35 @@ def _validated(validate: Callable[[dict], _Checked | None], output: dict | None)
 def _short(reason: str) -> str:
     """Whole words only: a cut number would be a new one."""
     return textwrap.shorten(reason, _REASON_MAX_CHARS, placeholder=" ...") if reason else ""
+
+
+# ---- shape checks for decision_holds: each returns a check that never raises ---------------------
+
+
+def _shaped(pattern: re.Pattern) -> Callable[[Any], bool]:
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _one_of(values: Any) -> Callable[[Any], bool]:
+    allowed = frozenset(getattr(value, "value", value) for value in values)
+    return lambda value: isinstance(value, str) and value in allowed
+
+
+def _each(check: Callable[[Any], bool]) -> Callable[[Any], bool]:
+    return lambda value: isinstance(value, list) and all(check(item) for item in value)
+
+
+def _rows(fields: dict[str, Callable[[Any], bool]]) -> Callable[[Any], bool]:
+    """A list of dicts with exactly these keys, each value passing its check."""
+    def row_holds(row: Any) -> bool:
+        return isinstance(row, dict) and set(row) == set(fields) and all(check(row[key]) for key, check in fields.items())
+    return _each(row_holds)
+
+
+def _holds(fields: dict[str, Callable[[Any], bool]], codes: type[Enum], decision: Any, reason_codes: Any) -> bool:
+    """A decision with exactly these keys, each value passing its check, and reason codes from this enum."""
+    if not isinstance(decision, dict) or set(decision) != set(fields):
+        return False
+    if not _each(_one_of(codes))(reason_codes):
+        return False
+    return all(check(decision[key]) for key, check in fields.items())

@@ -49,7 +49,7 @@ from .. import systems
 from ..policy import EXECUTIVE_APPROVAL_AED
 from ..procurement_agent import PkgStatus, _valid_by_package
 from ..workflow import Privacy
-from ._base import Status, outcome, run_specialist
+from ._base import _PACKAGE_ID, _VENDOR_ID, Status, _each, _holds, _one_of, _rows, _shaped, outcome, run_specialist
 from .evaluation import _KNOWN_PROBLEMS
 
 _VENDORS_AGENT = "sourcing_vendors"
@@ -261,10 +261,14 @@ def _chase_list(state: dict) -> list[dict]:
 
 
 def _min_chase(needed: int | None, valid: int, targets: int) -> int:
-    """Enough to reach the count needed, if every one chased sends a valid quote; unknown needed: all."""
+    """Enough to reach the count needed, and never fewer than _MOST_QUOTES allows, as min_ask does.
+
+    Round 1's needed can be lower than the policy's top count: the floor keeps the chase
+    from stopping short. Unknown needed: all. Example: needed 1, valid 0, targets 3 -> 3.
+    """
     if needed is None:
         return targets
-    return min(max(needed - valid, 0), targets)
+    return min(max(_MOST_QUOTES - valid, needed - valid, 0), targets)
 
 
 def _target(state: dict, package: str, vendor_id: str, records: dict[str, str]) -> dict:
@@ -539,3 +543,23 @@ def _chase_codes(facts: dict, decision: dict) -> set[_ChaseCode]:
         if any(row["replied"] for row in skipped):
             found.add(_ChaseCode.SKIPPED_PROBLEM_QUOTE)
     return found
+
+
+# ---- saved decisions ------------------------------------------------------------------------------
+
+
+def decision_holds(decision: Any, reason_codes: Any) -> bool:
+    """True if a saved decision has one of this specialist's two shapes, told apart by its keys:
+    {packages} with ask codes (pick_vendors), or {chase, skipped} with chase codes (pick_chase).
+
+    Shape only: a decision that holds may still be wrong for the case (that is the validators' job).
+    """
+    if isinstance(decision, dict) and set(decision) == {"packages"}:
+        return _holds({"packages": _ASK_ROWS}, _AskCode, decision, reason_codes)
+    return _holds({"chase": _PAIRS, "skipped": _PAIRS}, _ChaseCode, decision, reason_codes)
+
+
+# The shapes of a decided row: ask (pick_vendors) and chase (pick_chase).
+_VENDOR_IDS = _each(_shaped(_VENDOR_ID))
+_ASK_ROWS = _rows({"package": _shaped(_PACKAGE_ID), "ask": _VENDOR_IDS, "note": _one_of(_Note), "left_out": _VENDOR_IDS})
+_PAIRS = _rows({"vendor_id": _shaped(_VENDOR_ID), "package": _shaped(_PACKAGE_ID)})

@@ -219,7 +219,8 @@ def test_a_private_run_sends_no_text_even_in_full_mode(system, runs, monkeypatch
     workflows = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
     view = workflows.start_boq(get_user("khalid"), _ISSUES, Privacy.COUNTS_ONLY, mode)
     workflows.view(view.run_id, get_user("omar"))  # an approver's view runs the policy lookup too
-    assert {run["name"] for run in runs.created} >= {"workflow_start", "ask"}
+    # Agent mode cites the policy through the policy specialist (part 3b), not ask().
+    assert {run["name"] for run in runs.created} >= ({"workflow_start", "ask"} if mode is RunMode.CLASSIC else {"workflow_start", "agent_step"})
     assert _texts(runs) == []
     assert {_session(run) for run in runs.created} == {view.run_id}  # the case id is still sent
 
@@ -266,7 +267,8 @@ def test_every_run_of_a_case_shares_one_thread(system, runs, monkeypatch):
     view = workflows.start_boq(get_user("khalid"), _ISSUES, mode=RunMode.AGENT)
     workflows.view(view.run_id, get_user("omar"))
     workflows.decide(view.run_id, get_user("omar"), Decision.APPROVE)
-    assert {run["name"] for run in runs.created} >= {"workflow_start", "workflow_decide", "agent_step", "ask", "retrieve"}
+    # Agent mode cites the policy through the policy specialist (part 3b): its agent_turn spans, not ask and retrieve.
+    assert {run["name"] for run in runs.created} >= {"workflow_start", "workflow_decide", "agent_step", "agent_turn"}
     assert len({run["trace_id"] for run in runs.created}) > 1
     assert {_session(run) for run in runs.created} == {view.run_id}
 

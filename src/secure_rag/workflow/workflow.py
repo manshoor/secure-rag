@@ -22,6 +22,7 @@ it with nothing in the outbox. Each step writes one audit line and one span.
 """
 
 import fcntl
+import functools
 import json
 import re
 import threading
@@ -184,6 +185,7 @@ class WfState(TypedDict, total=False):
     events: list[dict]  # deliveries and agent-gate decisions, with who made them
     agent: dict  # agent stage control: round, counters, next node
     reply: dict  # a pause's saved input, until its apply node has acted on it
+    outcomes: dict  # specialist outcomes by key (procurement_agent._outcome_key); start_stage leaves them
 
 
 @dataclass
@@ -276,6 +278,7 @@ class WorkflowRunner:
         boq_reader: Any = None,
         canonicalizer: Any = None,
         step_planner: Any = None,
+        agent_client: Any = None,
     ) -> None:
         self._store = store
         self._composer = composer
@@ -284,6 +287,7 @@ class WorkflowRunner:
         self._boq_reader = boq_reader  # tests inject a reader; default is boq_parser.parse_boq
         self._canonicalizer = canonicalizer  # Claude mode only (boq.ClaudeCanonicalizer)
         self._step_planner = step_planner  # agent mode; None means procurement_agent.ScriptedPlanner
+        self._agent_client = agent_client  # the specialists' tool-use client; None means each one's scripted stand-in
         self._graph = self._build(checkpointer or open_checkpointer())
 
         # One decision at a time per run; db.run_lock covers other processes.
@@ -509,7 +513,7 @@ class WorkflowRunner:
         for name, payload, apply in (
             ("gate_rfq", procurement_agent.rfq_payload, procurement_agent.rfq_apply),
             ("wait_quotes", procurement_agent.wait_payload, procurement_agent.wait_apply),
-            ("gate_quotes", procurement_agent.quotes_payload, procurement_agent.quotes_apply),
+            ("gate_quotes", procurement_agent.quotes_payload, functools.partial(procurement_agent.quotes_apply, self)),
         ):
             nodes[name] = _ask(payload)
             nodes[f"{name}_apply"] = apply
