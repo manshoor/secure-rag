@@ -83,10 +83,11 @@ def test_the_eval_sends_no_traces_and_restores_tracing(system):
 
 
 def test_the_hostile_kit_tries_in_every_boq_case(system):
-    """A BOQ case where the hostile planner and canonicaliser never ran would prove nothing."""
+    """A BOQ case where the hostile planner and specialists never ran would prove nothing.
+    Agent mode asks the intake specialist, not the canonicaliser (part 3c)."""
     results = {r.case: r for r in run_injection_eval(system, Kit.HOSTILE)}
     for case in ("boq_known_pattern", "boq_reworded", "boq_arabic"):
-        assert "planner tried" in results[case].note and "matcher tried" in results[case].note, results[case].note
+        assert "planner tried" in results[case].note and "specialists tried" in results[case].note, results[case].note
 
 
 # ---- re-review: the eval must have teeth --------------------------------------------------------

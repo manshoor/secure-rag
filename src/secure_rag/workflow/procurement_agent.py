@@ -15,6 +15,7 @@ The planner sees ids, counts, amounts and statuses, never file text. Each pause 
 two nodes (workflow._ask): one only waits, the next acts on the saved reply. Outbox writes are keyed, so a re-run never sends twice.
 Four places ask a specialist (policy_rule, pick_vendors, ask_procurement, the extend at
 gate_quotes): it proposes, code checks the decision again and applies it (see _consult).
+Before pricing, boq_review asks the intake specialist about weak lines (review_step).
 """
 
 import json
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from . import systems
 from ..core import audit, config, tracing
-from ..boq.boq import REPEATED_ITEM, ZERO_LINE
+from ..boq.boq import REPEATED_ITEM, ZERO_LINE, LineStatus
 from ..boq.boq_parser import parse_quote
 from ..core.agent_runtime import AgentResult, EndReason, RunPrivacy
 from ..core.llm import ClaudeClient, ModelRefused, ModelUnavailable, Usage
@@ -55,6 +56,15 @@ _DEFAULT_NOTE = "standard"  # sourcing's standard request note: also for package
 _SPECIALIST_EVENT = "specialist"
 _SPECIALIST_ERROR = "specialist_error"
 _INVALID_OUTCOME = "invalid_outcome"  # audited as the error when a decision fails its shape check
+# The intake specialist's words for its rows, restated: it imports this module.
+_LINE_PREFIX = "L"
+_QUOTE = "quote"
+_HINT = "hint"
+_REVIEW = "review"
+_NO_TRADE = "none"
+_NO_REVIEW = "none"
+_HINT_TEXT_CHARS = 120  # as match_step cuts a canonicalizer suggestion
+_WEAK = frozenset({LineStatus.LOW_SCORE.value, LineStatus.UNMATCHED.value})
 
 
 class Tool(str, Enum):
@@ -94,6 +104,7 @@ class _Kind(str, Enum):
     PICK_VENDORS = "pick_vendors"
     EVALUATE_SHORTFALL = "evaluate_shortfall"
     PLAN_CHASE = "plan_chase"
+    REVIEW_LINES = "review_lines"
 
 
 # Each kind's specialist, by the name its outcome carries. Restated: the specialists import this module.
@@ -102,6 +113,7 @@ _SPECIALISTS = {
     _Kind.PICK_VENDORS: "sourcing_vendors",
     _Kind.EVALUATE_SHORTFALL: "evaluation",
     _Kind.PLAN_CHASE: "sourcing_chase",
+    _Kind.REVIEW_LINES: "boq_intake",
 }
 
 # The decision keys each task saves; sourcing's check alone cannot tell its two shapes apart.
@@ -110,6 +122,7 @@ _DECISION_KEYS = {
     _Kind.PICK_VENDORS: {"packages"},
     _Kind.EVALUATE_SHORTFALL: {"packages"},
     _Kind.PLAN_CHASE: {"chase", "skipped"},
+    _Kind.REVIEW_LINES: {"lines"},
 }
 
 
@@ -253,7 +266,9 @@ def _unquoted_causes(rfq: list[dict], review: list[dict]) -> str:
     """Each cause that keeps lines out of every package, with its line count: '2 with an unknown unit'."""
     held = [line["reason"] for line in review if line["reason"].endswith("; not priced")]
     no_unit = sum(not line.get("unit") for line in rfq)
-    no_category = sum(bool(line.get("unit")) and not line_category(line["description"]) for line in rfq)
+    # A proposed line kept out of a trade code found counts here too (see _packages).
+    code_trades = _code_trades(rfq)
+    no_category = sum(bool(line.get("unit")) and not _trade(line, code_trades) for line in rfq)
     repeated = sum(reason.startswith(REPEATED_ITEM) for reason in held)
     zero = sum(reason.startswith(ZERO_LINE) for reason in held)
     counted = (
@@ -282,10 +297,13 @@ def start_stage(state: "WfState", lines: list[dict], total: Decimal, rfq: list[d
 
 
 def _packages(rfq: list[dict]) -> list[dict]:
-    """RFQ lines grouped by quotation category; lines with no category or quantity stay RFQ-only."""
+    """RFQ lines grouped by quotation category; lines with no category or quantity stay RFQ-only.
+    A line code found no category for may form a package of the intake specialist's proposed trade
+    (line field proposed_trade), but never joins a trade code found on any RFQ line: it stays RFQ-only."""
+    code_trades = _code_trades(rfq)
     grouped: dict[str, dict] = {}
     for line in rfq:
-        category = line_category(line["description"])
+        category = _trade(line, code_trades)
         if not category or not line.get("unit") or not line.get("quantity"):
             continue
         package = grouped.setdefault(category, {"id": category, "category": category, "items": [], "quantities": {}, "units": {}, "vendors": [], "status": PkgStatus.OPEN.value})
@@ -293,6 +311,20 @@ def _packages(rfq: list[dict]) -> list[dict]:
         package["quantities"][line["item_no"]] = line["quantity"]
         package["units"][line["item_no"]] = line["unit"]
     return list(grouped.values())
+
+
+def _trade(line: dict, code_trades: set[str]) -> str:
+    """Code's category for the line, else a proposed trade that is none of code_trades, else ''."""
+    found = line_category(line["description"])
+    if found:
+        return found
+    proposed = line.get("proposed_trade", "")
+    return "" if proposed in code_trades else proposed
+
+
+def _code_trades(rfq: list[dict]) -> set[str]:
+    """The categories code itself finds on the RFQ lines."""
+    return {found for found in (line_category(line["description"]) for line in rfq) if found}
 
 
 # ---- the loop: one planner step per pass ------------------------------------------------------
@@ -674,9 +706,17 @@ _TOOLS: dict[Tool, Callable[..., tuple[dict, dict]]] = {
 
 
 def rfq_payload(state: "WfState") -> dict:
-    """notes: the request note id per package that will be asked."""
+    """notes: the request note id per package that will be asked.
+    proposals: the intake specialist's accepted proposals per RFQ line (ids, codes and enums only).
+    Procurement's decision at this gate is the decision on a proposed trade."""
     notes = {p["id"]: p.get("note") or _DEFAULT_NOTE for p in state["packages"] if p["vendors"] and p["status"] in _LIVE}
-    return {"gate": "rfq", "approver_roles": ["procurement"], "requests": _request_count(state), "notes": notes}
+    proposals = [_proposal(line) for line in state["rfq"] if line.get("line")]
+    return {"gate": "rfq", "approver_roles": ["procurement"], "requests": _request_count(state), "notes": notes, "proposals": proposals}
+
+
+def _proposal(line: dict) -> dict:
+    return {"line": line["line"], "item": line["item_no"], "trade": line.get("proposed_trade", _NO_TRADE),
+            "suggested_code": line.get("suggested_code", ""), "review": line.get("intake_review", _NO_REVIEW)}
 
 
 def wait_payload(state: "WfState") -> dict:
@@ -1038,9 +1078,9 @@ def _consult(state: "WfState", kind: _Kind, entry: Callable[[], dict], rules: Ca
 
 def _holds(kind: _Kind, decision: Any, reason_codes: Any) -> bool:
     """The task's own decision keys and its specialist's shape check."""
-    from .specialists import evaluation, policy_check, sourcing
+    from .specialists import boq_intake, evaluation, policy_check, sourcing
 
-    module = {_Kind.CHECK_POLICY: policy_check, _Kind.EVALUATE_SHORTFALL: evaluation}.get(kind, sourcing)
+    module = {_Kind.CHECK_POLICY: policy_check, _Kind.EVALUATE_SHORTFALL: evaluation, _Kind.REVIEW_LINES: boq_intake}.get(kind, sourcing)
     return module.decision_holds(decision, reason_codes) is True and set(decision) == _DECISION_KEYS[kind]
 
 
@@ -1053,8 +1093,9 @@ def _options(state: "WfState") -> dict:
 
 
 def _outcome_key(state: "WfState", kind: _Kind) -> str:
-    """Where an outcome is saved: '<task kind>:<round>' (3d returns the running task's id here)."""
-    return f"{kind.value}:{state['agent']['round']}"
+    """Where an outcome is saved: '<task kind>:<round>' (3d returns the running task's id here).
+    Before pricing there is no agent stage yet: round 1."""
+    return f"{kind.value}:{(state.get('agent') or {}).get('round', 1)}"
 
 
 def _saved(state: "WfState", kind: _Kind, found: dict) -> dict:
@@ -1069,3 +1110,86 @@ def _with_usage(current: dict, used: dict) -> dict:
         "output": current.get("output", 0) + used["output_tokens"],
         "cost_usd": current.get("cost_usd", 0.0) + used["cost_usd"],
     }
+
+
+# ---- before pricing: the intake specialist on weak lines (graph node boq_review, agent mode) ------
+#
+#   boq_match ─► review_step ─► boq_intake.review_weak_lines ─► each row re-checked now ─► boq_price
+#     hint   suggested_code + the catalogue item's own description (never priced)
+#     trade  proposed_trade, only where line_category found none: the line joins that package
+#     review intake_review
+# A line given a proposal carries its id ("line": "L<index>") to the RFQ list and rfq_payload.
+
+
+def review_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
+    """The intake outcome applied to boq_raw. A saved outcome is reused: no second call, no usage twice."""
+    from .specialists import boq_intake
+    from .workflow import StepStatus, _step
+
+    # A resumed run already has this outcome and its usage.
+    key = _outcome_key(state, _Kind.REVIEW_LINES)
+    saved = (state.get("outcomes") or {}).get(key)
+    update: dict = {}
+    if saved is None:
+        saved = _consult(
+            state, _Kind.REVIEW_LINES,
+            lambda: boq_intake.review_weak_lines(state, runner._agent_client, **_options(state)),
+            lambda: _review_rules(state),
+        )
+        update = _saved(state, _Kind.REVIEW_LINES, saved)
+
+    # Code applies only rows that still hold now; the counts are what was applied.
+    lines, counts = _applied_review(state["boq_raw"], saved["decision"]["lines"])
+    weak = sum(_still_weak(line) for line in state["boq_raw"])
+    detail = {"weak": weak, **counts, "outcome": saved["status"]}
+    return {**update, "boq_raw": lines, **_step(state, "boq_review", StepStatus.DONE, detail)}
+
+
+def _review_rules(state: "WfState") -> tuple[dict, list[str]]:
+    """Today's rule in intake's shape: every weak line quote, with code's trade."""
+    from .specialists import boq_intake
+
+    rows = [{"line": line["line"], "action": _QUOTE, "suggested_code": "", "review": _NO_REVIEW, "trade": line["trade"]}
+            for line in boq_intake.weak_line_facts(state)["lines"]]
+    return {"lines": rows}, []
+
+
+def _applied_review(raw: list[dict], rows: list[dict]) -> tuple[list[dict], dict]:
+    """boq_raw with each row's proposal applied where it holds now; the first row per line counts."""
+    lines = [dict(line) for line in raw]
+    counts = {"hints": 0, "trades": 0, "reviews": 0}
+    seen: set[int] = set()
+    for row in rows:
+        index = int(row["line"].removeprefix(_LINE_PREFIX))
+        if index in seen or index >= len(lines) or not _still_weak(lines[index]):
+            continue
+        seen.add(index)
+        line = lines[index]
+        proposed = _proposed(line, row)
+        if not proposed:
+            continue
+        line.update(proposed, line=f"{_LINE_PREFIX}{index}")
+        counts["hints"] += "suggested_code" in proposed
+        counts["trades"] += "proposed_trade" in proposed
+        counts["reviews"] += "intake_review" in proposed
+    return lines, counts
+
+
+def _proposed(line: dict, row: dict) -> dict:
+    """The line fields one row sets: a hint only with its action and a catalogue item; a trade only
+    where code found none; a review only with its action."""
+    found: dict = {}
+    item = next((item for item in systems.catalogue() if item.code == row["suggested_code"]), None)
+    if row["action"] == _HINT and item:
+        found.update(suggested_code=item.code, suggested=item.description[:_HINT_TEXT_CHARS])
+    if row["trade"] != _NO_TRADE and not line_category(line["description"]):
+        found["proposed_trade"] = row["trade"]
+    if row["action"] == _REVIEW and row["review"] != _NO_REVIEW:
+        found["intake_review"] = row["review"]
+    return found
+
+
+def _still_weak(line: dict) -> bool:
+    """match_step's weak test, and never a held line (as the intake specialist's)."""
+    held = bool(line["note"]) or bool(line["injection"]) or line["status"] == LineStatus.HELD.value
+    return line["status"] in _WEAK and bool(line["unit"]) and not held

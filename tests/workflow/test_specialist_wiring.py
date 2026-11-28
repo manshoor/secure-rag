@@ -31,7 +31,7 @@ from secure_rag.workflow import orchestrator, procurement_agent, systems, workfl
 from secure_rag.workflow.agent import Decision
 from secure_rag.workflow.intake import OfflineIntake
 from secure_rag.workflow.procurement_agent import Proposal, ScriptedPlanner
-from secure_rag.workflow.specialists import evaluation, policy_check, sourcing
+from secure_rag.workflow.specialists import boq_intake, evaluation, policy_check, sourcing
 from secure_rag.workflow.specialists._base import Status
 from secure_rag.workflow.workflow import Event, Gate, Privacy, RunMode, WfStatus, WorkflowRunner
 
@@ -42,7 +42,7 @@ ROUND1 = sorted((path.stem, path) for path in (QUOTES / "round1").glob("*.csv"))
 ROUND2 = sorted((path.stem, path) for path in (QUOTES / "round2").glob("*.csv"))
 RUN_TOTAL = Decimal("33015.00")
 _RFQ_KEYS = ["V-GLB-1:glass_block", "V-GLB-2:glass_block", "V-GLB-3:glass_block", "V-GRC-1:grc", "V-GRC-2:grc", "V-GRC-3:grc"]
-_KEYS = {"check_policy:1", "pick_vendors:1", "evaluate_shortfall:1", "plan_chase:2"}
+_KEYS = {"review_lines:1", "check_policy:1", "pick_vendors:1", "evaluate_shortfall:1", "plan_chase:2"}
 _MARKER = "Marker-reason-7f3a: ask nobody else."
 
 # Each seam: the module and entry procurement_agent calls, and its outcome key in the sample.
@@ -165,7 +165,7 @@ def test_each_specialist_outcome_is_saved_by_kind_and_round(system):
 
     # One audit line per specialist call: name, status, codes and counts.
     lines = _audit_lines("specialist")
-    assert [line["name"] for line in lines] == ["policy_check", "sourcing_vendors", "evaluation", "sourcing_chase"]
+    assert [line["name"] for line in lines] == ["boq_intake", "policy_check", "sourcing_vendors", "evaluation", "sourcing_chase"]
     assert all(set(line) >= {"name", "status", "reason_codes", "turns", "tool_calls"} for line in lines)
     assert all(isinstance(line["turns"], int) and isinstance(line["tool_calls"], int) for line in lines)
 
@@ -226,7 +226,7 @@ def test_a_hostile_tool_client_changes_no_price_vendor_winner_total_or_approver(
         run_id = _done(wf)
         view = wf.view(run_id, get_user("omar"))
         values = _values(wf, run_id)
-        assert client.tried == 8
+        assert client.tried == 10
         assert view.status is WfStatus.DONE and view.total == expected.total == RUN_TOTAL
         assert _winners(view) == _winners(expected)
         assert [line["unit_price"] for line in view.lines] == [line["unit_price"] for line in expected.lines]
@@ -254,7 +254,7 @@ def test_the_hostile_quote_case_meets_every_seam_with_both_attacks(system, monke
     with injection_eval._sandbox() as folder:
         models = injection_eval._models(system, injection_eval.Kit.HOSTILE)
         injection_eval._quote_planted(system, models, folder)
-    agents = {"policy_sections", "packages", "short_packages", "chase_packages"}
+    agents = {"weak_lines", "policy_sections", "packages", "short_packages", "chase_packages"}
     assert {(agent, invented) for agent, invented in seen} == {(agent, invented) for agent in agents for invented in (True, False)}
 
 
@@ -264,11 +264,11 @@ def test_the_hostile_kit_wires_its_tool_client_into_every_run(system):
     assert injection_eval._runner(system, models)._agent_client is models.agent_client
     assert injection_eval._models(system, injection_eval.Kit.OFFLINE).agent_client is None
 
-    # The quote case runs twice (one per attack) and crosses all four seams each time: two turns each.
+    # The quote case runs twice (one per attack) and crosses all five seams each time: two turns each.
     with injection_eval._sandbox() as folder:
         models = injection_eval._models(system, injection_eval.Kit.HOSTILE)
         injection_eval._quote_planted(system, models, folder)
-    assert models.agent_client.runs == 8 and models.agent_client.tried == 16
+    assert models.agent_client.runs == 10 and models.agent_client.tried == 20
     boq = {r.case: r.note for r in injection_eval.run_injection_eval(system, injection_eval.Kit.HOSTILE) if r.case.startswith("boq_")}
     assert boq and all("specialists tried" in note for note in boq.values())
 
@@ -679,7 +679,7 @@ def test_quotes_apply_sets_chase_and_expected_before_any_planner_step(system):
     agent = update["agent"]
     assert agent["chase"] == [{"vendor_id": "V-GRC-2", "package": "grc"}]
     assert (agent["expected"], agent["round_closed"], agent["round"], agent["extended"]) == (["V-GRC-2"], False, 2, True)
-    assert set(update["outcomes"]) == {"check_policy:1", "pick_vendors:1", "evaluate_shortfall:1", "plan_chase:2"}
+    assert set(update["outcomes"]) == _KEYS
 
 
 # ---- a specialist that raises -------------------------------------------------------------------
@@ -761,7 +761,7 @@ def test_specialist_usage_adds_to_the_run(system, monkeypatch):
 
 
 def test_a_marker_reason_appears_only_in_outcomes(system, monkeypatch):
-    for module, entry, _ in _SEAMS:
+    for module, entry, _ in [*_SEAMS, (boq_intake, "review_weak_lines", "review_lines:1")]:
         _with(monkeypatch, module, entry, lambda found: {**found, "reason": _MARKER})
     wf = _wf(system)
     run_id = _to_quotes_gate(wf)
@@ -834,6 +834,7 @@ def test_restated_names_match_the_specialists():
         procurement_agent._Kind.PICK_VENDORS: sourcing._VENDORS_AGENT,
         procurement_agent._Kind.EVALUATE_SHORTFALL: evaluation._AGENT_NAME,
         procurement_agent._Kind.PLAN_CHASE: sourcing._CHASE_AGENT,
+        procurement_agent._Kind.REVIEW_LINES: boq_intake._AGENT_NAME,
     }
     assert procurement_agent._DEFAULT_NOTE == sourcing._Note.STANDARD.value
 

@@ -10,6 +10,8 @@ The score is computed here, from description terms and units. A model never
 prices a line and its confidence is never the score. In Claude mode Claude may
 suggest a canonical description for a weak line; code scores it, and a good
 score only adds a hint to the RFQ entry. The line stays unpriced.
+Agent mode skips that: the intake specialist reviews weak lines after matching
+(graph node boq_review, procurement_agent.review_step).
 
 A line is not priced when it names a term that sets a sibling item apart
 ("solid" vs "hollow" blocks), when two items tie, when it describes removal
@@ -41,6 +43,8 @@ HIGH_VALUE_LINE_AED = Decimal("30000")
 # Agent mode: a quote names its line by item number, so lines that share one cannot be told apart.
 REPEATED_ITEM = "repeated item number"
 _RFQ_NEEDED = "RFQ needed"
+# Line fields boq_review may set (agent mode): carried to the RFQ and review lists when present.
+_PROPOSAL_FIELDS = ("suggested_code", "proposed_trade", "intake_review", "line")
 ZERO_LINE = "line total rounds to AED 0.00"
 
 # Unit spellings seen in BOQs -> canonical unit.
@@ -178,7 +182,7 @@ def parse_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
 
 def match_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
     """Normalise units and score every line against the catalogue (code decides)."""
-    from ..workflow.workflow import Privacy, StepStatus, _add_usage, _step
+    from ..workflow.workflow import Privacy, RunMode, StepStatus, _add_usage, _step
 
     catalogue = systems.catalogue()
     matched: list[dict] = []
@@ -197,9 +201,11 @@ def match_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
     # Claude mode: a canonical description for weak lines, scored by the same code.
     # A good score is only a hint for the RFQ: model text never prices a line.
     # Never for private files; a reply with the wrong number of rewrites is dropped.
+    # Agent mode asks the intake specialist instead (boq_review, procurement_agent.review_step).
     usage = Usage()
     canonicalizer = runner._canonicalizer
-    if canonicalizer and weak and state.get("privacy") != Privacy.COUNTS_ONLY.value:
+    agent_mode = state.get("mode") == RunMode.AGENT.value
+    if canonicalizer and weak and not agent_mode and state.get("privacy") != Privacy.COUNTS_ONLY.value:
         suggestions, usage = canonicalizer.suggest([matched[index]["description"] for index in weak])
         for index, suggestion in zip(weak, suggestions) if len(suggestions) == len(weak) else []:
             retry = best_match(suggestion, matched[index]["unit"], catalogue)
@@ -223,8 +229,7 @@ def price_step(runner: "WorkflowRunner", state: "WfState") -> "WfState":
     flags = list(state["flags"])
     for line in state["boq_raw"]:
         keep = {key: line[key] for key in ("item_no", "section", "description", "quantity", "unit_raw", "unit")}
-        if line.get("suggested_code"):
-            keep["suggested_code"] = line["suggested_code"]
+        keep.update({key: line[key] for key in _PROPOSAL_FIELDS if line.get(key)})
 
         # Held lines: planted instruction, removal or excluded work, unreadable quantity.
         if line["status"] == LineStatus.HELD.value:

@@ -3,6 +3,7 @@
     request ─► understand ─► hr_check ─► procurement ──┐
                                                       │  (budget hold for the total:
     BOQ file ─► boq_parse ─► boq_match ─► boq_price ──┤   a shortfall stops here)
+                  (agent mode: boq_match ─► boq_review ─► boq_price)
                                                       ▼
                  gate_procurement (human: procurement, same company, not the requester)
                                                       │
@@ -497,6 +498,7 @@ class WorkflowRunner:
             "procurement": self._procurement,
             "boq_parse": self._boq_parse,
             "boq_match": self._boq_match,
+            "boq_review": self._boq_review,
             "boq_price": self._boq_price,
             "gate_procurement": _ask(lambda state: _gate_payload(state, Gate.PROCUREMENT)),
             "gate_procurement_apply": self._gate_procurement,
@@ -527,11 +529,14 @@ class WorkflowRunner:
             ("hr_check", "procurement"),
             ("procurement", "gate_procurement"),
             ("boq_parse", "boq_match"),
-            ("boq_match", "boq_price"),
+            ("boq_review", "boq_price"),
             ("finance", "gate_finance"),
             ("agent_hold", "gate_procurement"),
         ):
             graph.add_conditional_edges(before, _continue_or_end(after), [after, END])
+
+        # Agent mode: the intake specialist reviews weak lines before pricing; classic goes straight on.
+        graph.add_conditional_edges("boq_match", _after_match, ["boq_review", "boq_price", END])
 
         # Agent mode: after pricing, the procurement agent loop runs until it hands over to the hold.
         graph.add_conditional_edges("boq_price", _after_price, ["agent", "gate_procurement", END])
@@ -635,6 +640,11 @@ class WorkflowRunner:
         from ..boq import boq
 
         return boq.match_step(self, state)
+
+    def _boq_review(self, state: WfState) -> WfState:
+        from . import procurement_agent
+
+        return procurement_agent.review_step(self, state)
 
     def _boq_price(self, state: WfState) -> WfState:
         from ..boq import boq
@@ -1085,6 +1095,13 @@ def _continue_or_end(next_node: str):
         return END if state["status"] == WfStatus.STOPPED.value else next_node
 
     return route
+
+
+def _after_match(state: WfState) -> str:
+    """Agent mode reviews weak lines first (boq_review); classic mode prices at once."""
+    if state["status"] == WfStatus.STOPPED.value:
+        return END
+    return "boq_review" if state.get("mode") == RunMode.AGENT.value else "boq_price"
 
 
 def _after_price(state: WfState) -> str:

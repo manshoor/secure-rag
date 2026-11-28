@@ -96,7 +96,7 @@ def test_a_private_agent_run_sends_no_text_in_full_mode(system, sink, marked):
     wf = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
     run_id = _to_procurement(wf, Privacy.COUNTS_ONLY)
     outcomes = _outcomes(wf, run_id)
-    assert len(outcomes) == 4 and {found["status"] for found in outcomes.values()} == {"private"}
+    assert len(outcomes) == 5 and {found["status"] for found in outcomes.values()} == {"private"}
     assert {"ask", "retrieve"} <= sink.names()
     assert not _AGENT_SPANS & sink.names()
     assert sink.texts() == []
@@ -108,7 +108,7 @@ def test_a_normal_agent_run_sends_text_but_no_reason(system, sink, marked):
     wf = WorkflowRunner(system.store, system.composer, OfflineIntake(), InMemorySaver())
     run_id = _to_procurement(wf, Privacy.NORMAL)
     outcomes = _outcomes(wf, run_id)
-    assert len(outcomes) == 4 and {found["reason"] for found in outcomes.values()} == {_MARKER}
+    assert len(outcomes) == 5 and {found["reason"] for found in outcomes.values()} == {_MARKER}
     assert _AGENT_SPANS <= sink.names()
     assert sink.texts() != []
     assert _MARKER not in sink.sent()
